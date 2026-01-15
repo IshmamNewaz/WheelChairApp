@@ -10,7 +10,9 @@ def stopDefaultLogging():
 
 speak = pyttsx3.init()
 voices = speak.getProperty('voices')
-speak.setProperty('voice', voices[3].id)
+if voices:
+    voice_index = 3 if len(voices) > 3 else 0
+    speak.setProperty('voice', voices[voice_index].id)
 speak.setProperty('rate', 150)
 def talk(text):
     speak.say(text)
@@ -95,19 +97,23 @@ def most_common_result(batch_results):
 def main():
     numberOfImagesInBatch = 5
     cap = None
-    for i in range(11):  # 0..10
-        cap = cv2.VideoCapture(i)
-        if cap.isOpened():
-            print(f"Using camera index {i}")
-            break
-        cap.release()
-        cap = None
+    while cap is None:
+        for i in range(11):  # 0..10
+            cap = cv2.VideoCapture(i)
+            if cap.isOpened():
+                print(f"Using camera index {i}")
+                break
+            cap.release()
+            cap = None
 
-    if cap is None:
-        raise RuntimeError("No camera found (indices 0–10)")
+        if cap is None:
+            print("No camera found (indices 0–10). Retrying in 2s...")
+            time.sleep(2)
     imgSize = 640
     confidenceThreshold = 0.4
-    weightPath = "/home/trp/Desktop/WheelChair/RoadSignDetection/last.pt "
+    weightPath = os.path.join(os.path.dirname(__file__), "last.pt")
+    if not os.path.exists(weightPath):
+        raise FileNotFoundError(f"Model weights not found at {weightPath}")
     model = YOLO(weightPath)
 
     last_common_result = None

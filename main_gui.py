@@ -1,11 +1,15 @@
-
-
-
 import sys
+
+import os
+
+import subprocess
 
 import time
 
 import threading
+
+import queue
+from collections import deque, Counter
 
 from dataclasses import dataclass
 
@@ -25,9 +29,16 @@ from PySide6.QtWidgets import (
 
     QApplication, QWidget, QLabel, QPushButton,
 
-    QVBoxLayout, QHBoxLayout, QFrame, QMainWindow, QStackedWidget
+    QVBoxLayout, QHBoxLayout, QFrame, QMainWindow, QCheckBox
 
 )
+
+try:
+    from ultralytics import YOLO
+    YOLO_AVAILABLE = True
+except Exception:
+    YOLO = None
+    YOLO_AVAILABLE = False
 
 
 
@@ -71,6 +82,18 @@ except (ImportError, RuntimeError):
 
 
 
+try:
+
+    import pyttsx3
+
+    TTS_AVAILABLE = True
+
+except Exception:
+
+    pyttsx3 = None
+
+    TTS_AVAILABLE = False
+
 
 
 TARGET_SIZE = 640
@@ -90,6 +113,10 @@ CLOSE_MIN_INDOOR = 600
 CLOSE_MAX_INDOOR = 1000
 
 MESSAGE_INTERVAL = 1
+
+SPEAK_REPEAT_SECONDS = 60
+
+SPEAK_RATE = 150
 
 
 
@@ -123,13 +150,21 @@ def get_direction(angle_deg: float) -> str:
 
     angle_deg %= 360
 
-    if angle_deg <= 45 or angle_deg > 315: return "front"
+    if angle_deg <= 45 or angle_deg > 315:
 
-    elif 45 < angle_deg <= 135: return "right"
+        return "front"
 
-    elif 135 < angle_deg <= 225: return "back"
+    elif 45 < angle_deg <= 135:
 
-    else: return "left"
+        return "right"
+
+    elif 135 < angle_deg <= 225:
+
+        return "back"
+
+    else:
+
+        return "left"
 
 
 
@@ -237,9 +272,9 @@ class LidarWorker(QObject):
 
                 for scan in lidar.iter_scans():
 
-                    if not self.running: break
+                    if not self.running:
 
-                    
+                        break
 
                     valid_pairs = [(dist, ang) for _, ang, dist in scan if dist > 0]
 
@@ -281,8 +316,6 @@ class LidarWorker(QObject):
 
                             zone = "close"
 
-                    
-
                     upd.zone = zone
 
                     upd.zone_angle = closest_angle_for_zone
@@ -295,13 +328,17 @@ class LidarWorker(QObject):
 
                     desired_led = "G"
 
-                    if zone == "stop": desired_led = "R"
+                    if zone == "stop":
 
-                    elif zone == "close": desired_led = "Y"
+                        desired_led = "R"
+
+                    elif zone == "close":
+
+                        desired_led = "Y"
 
                     self._set_led(desired_led)
 
-                    
+
 
                     self.update_signal.emit(upd)
 
@@ -315,13 +352,21 @@ class LidarWorker(QObject):
 
                 if lidar:
 
-                    try: lidar.stop()
+                    try:
 
-                    except: pass
+                        lidar.stop()
 
-                    try: lidar.disconnect()
+                    except Exception:
 
-                    except: pass
+                        pass
+
+                    try:
+
+                        lidar.disconnect()
+
+                    except Exception:
+
+                        pass
 
         self._set_led("G")
 
@@ -343,6 +388,162 @@ class LidarWorker(QObject):
 
 
 
+class TTSWorker(threading.Thread):
+
+    def __init__(self, tts_q: queue.Queue, stop_event: threading.Event):
+
+        super().__init__(daemon=True)
+
+        self.tts_q = tts_q
+
+        self.stop_event = stop_event
+
+        self.engine = None
+
+
+
+    def run(self):
+
+        if not TTS_AVAILABLE:
+
+            return
+
+
+
+        try:
+
+            self.engine = pyttsx3.init()
+
+            self.engine.setProperty('rate', SPEAK_RATE)
+
+        except Exception:
+
+            self.engine = None
+
+            return
+
+
+
+        while not self.stop_event.is_set():
+
+            try:
+
+                msg = self.tts_q.get(timeout=0.2)
+
+            except queue.Empty:
+
+                continue
+
+
+
+            if msg is None:
+
+                continue
+
+
+
+            try:
+
+                self.engine.say(msg)
+
+                self.engine.runAndWait()
+
+            except Exception:
+
+                pass
+
+
+
+        try:
+
+            if self.engine is not None:
+
+                self.engine.stop()
+
+        except Exception:
+
+            pass
+
+
+
+class SpeechGate:
+
+    def __init__(self, tts_q: queue.Queue):
+
+        self.tts_q = tts_q
+
+        self.last_key: tuple[str, str] | None = None
+
+        self.last_spoken_time: float = 0.0
+
+
+
+    def _phrase(self, zone: str, direction: str) -> str | None:
+
+        if zone == "close":
+
+            return f"Obstacle close at {direction}, careful!"
+
+        if zone == "stop":
+
+            return f"Obstacle in proximity at {direction}, stop!"
+
+        return None
+
+
+
+    def consider(self, zone: str, direction: str | None):
+
+        if direction is None:
+
+            return
+
+
+
+        if zone not in ("close", "stop"):
+
+            self.last_key = None
+
+            self.last_spoken_time = 0.0
+
+            return
+
+
+
+        now = time.time()
+
+        key = (zone, direction)
+
+
+
+        if self.last_key != key:
+
+            phrase = self._phrase(zone, direction)
+
+            if phrase:
+
+                self.tts_q.put(phrase)
+
+                self.last_key = key
+
+                self.last_spoken_time = now
+
+            return
+
+
+
+        if now - self.last_spoken_time >= SPEAK_REPEAT_SECONDS:
+
+            phrase = self._phrase(zone, direction)
+
+            if phrase:
+
+                self.tts_q.put(phrase)
+
+                self.last_spoken_time = now
+
+
+
 class CameraApp(QWidget):
 
     def __init__(self):
@@ -350,6 +551,9 @@ class CameraApp(QWidget):
         super().__init__()
 
         self.cap, self.streaming, self.last_frame_time = None, False, 0.0
+        self._frame_lock = threading.Lock()
+        self._frame_queue = deque(maxlen=20)
+        self._latest_frame = None
 
 
 
@@ -365,7 +569,7 @@ class CameraApp(QWidget):
 
         self.video.setText("Press Start to stream")
 
-        self.video.setMinimumSize(TARGET_SIZE, 300) 
+        self.video.setMinimumSize(TARGET_SIZE, 300)
 
         self.video.setMaximumSize(TARGET_SIZE, 300)
 
@@ -427,9 +631,13 @@ class CameraApp(QWidget):
 
     def toggle_stream(self):
 
-        if not self.streaming: self.start_stream()
+        if not self.streaming:
 
-        else: self.stop_stream()
+            self.start_stream()
+
+        else:
+
+            self.stop_stream()
 
 
 
@@ -457,23 +665,35 @@ class CameraApp(QWidget):
 
         if self.cap is None:
 
-            self.status.setText("Camera not found"); self.video.setText("Could not open webcam (0-10)")
+            self.status.setText("Camera not found")
+
+            self.video.setText("Could not open webcam (0-10)")
 
             return
 
 
 
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640); self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 
-        try: self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-        except Exception: pass
+        try:
+
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+        except Exception:
+
+            pass
 
         
 
         self.streaming, self.last_frame_time = True, 0.0
 
-        self.btn.setText("Stop"); self.status.setText(f"Streaming (Cam {working_index})"); self.video.setText("")
+        self.btn.setText("Stop")
+
+        self.status.setText(f"Streaming (Cam {working_index})")
+
+        self.video.setText("")
 
         self.timer.start(5)
 
@@ -481,23 +701,37 @@ class CameraApp(QWidget):
 
     def stop_stream(self):
 
-        self.timer.stop(); self.streaming = False
+        self.timer.stop()
 
-        self.btn.setText("Start"); self.status.setText("Idle"); self.video.setText("Press Start to stream")
+        self.streaming = False
+
+        self.btn.setText("Start")
+
+        self.status.setText("Idle")
+
+        self.video.setText("Press Start to stream")
 
         self.video.setPixmap(QPixmap())
 
-        if self.cap: self.cap.release(); self.cap = None
+        if self.cap:
+
+            self.cap.release()
+
+            self.cap = None
 
 
 
     def update_frame(self):
 
-        if not self.streaming or not self.cap: return
+        if not self.streaming or not self.cap:
+
+            return
 
         now = time.time()
 
-        if self.last_frame_time and (now-self.last_frame_time) < (1.0/FPS_LIMIT): return
+        if self.last_frame_time and (now-self.last_frame_time) < (1.0/FPS_LIMIT):
+
+            return
 
         self.last_frame_time = now
 
@@ -507,11 +741,16 @@ class CameraApp(QWidget):
 
         if not ok or frame is None:
 
-            self.status.setText("Frame read failed"); return
+            self.status.setText("Frame read failed")
+
+            return
 
         
 
         frame = center_crop_square(frame)
+        with self._frame_lock:
+            self._latest_frame = frame.copy()
+            self._frame_queue.append(frame.copy())
 
         frame = cv2.resize(frame, (TARGET_SIZE, 300), interpolation=cv2.INTER_AREA)
 
@@ -523,6 +762,12 @@ class CameraApp(QWidget):
 
         self.video.setPixmap(QPixmap.fromImage(qimg))
 
+    def get_recent_frames(self, count: int) -> list[np.ndarray]:
+        with self._frame_lock:
+            if not self._frame_queue:
+                return []
+            return list(self._frame_queue)[-count:]
+
 
 
     def closeEvent(self, event):
@@ -530,6 +775,68 @@ class CameraApp(QWidget):
         self.stop_stream()
 
         event.accept()
+
+
+class BatchDetectWorker(threading.Thread):
+    def __init__(self, camera_app: CameraApp, stop_event: threading.Event):
+        super().__init__(daemon=True)
+        self.camera_app = camera_app
+        self.stop_event = stop_event
+        self.model = None
+        self.img_size = 640
+        self.confidence = 0.4
+        self.batch_count = 5
+
+    def _load_model(self):
+        if not YOLO_AVAILABLE:
+            print("Ultralytics not available; batch detection disabled.")
+            return False
+        weights_path = os.path.join(os.path.dirname(__file__), "last.pt")
+        if not os.path.exists(weights_path):
+            print(f"Model weights not found at {weights_path}; batch detection disabled.")
+            return False
+        self.model = YOLO(weights_path)
+        return True
+
+    def _detect_frame(self, frame: np.ndarray) -> str:
+        results = self.model(source=frame, imgsz=self.img_size, conf=self.confidence, stream=False, show=False)
+        for r in results:
+            if r.boxes.cls.numel() == 0:
+                return "unknown"
+            cls = int(r.boxes.cls[0])
+            return r.names.get(cls, "unknown")
+        return "unknown"
+
+    def run(self):
+        if not self._load_model():
+            return
+
+        last_common = None
+        last_confirm_time = 0.0
+
+        while not self.stop_event.is_set():
+            frames = self.camera_app.get_recent_frames(self.batch_count)
+            if len(frames) < self.batch_count:
+                time.sleep(0.5)
+                continue
+
+            batch_results = [self._detect_frame(f) for f in frames]
+            for i, result in enumerate(batch_results):
+                print(f"Result of image {i+1}: {result}")
+
+            common_result = Counter(batch_results).most_common(1)[0][0]
+            print(f"Most common result: {common_result}\n")
+
+            current_time = time.time()
+            if common_result != last_common:
+                last_common = common_result
+                last_confirm_time = 0.0
+
+            if last_common is not None and last_common != "unknown" and current_time - last_confirm_time >= 10:
+                print(f"\n{last_common} is confirmed")
+                last_confirm_time = current_time
+
+            time.sleep(0.5)
 
 
 
@@ -541,8 +848,6 @@ class CombinedView(QWidget):
 
         self.thresholds_ref = {"t": Thresholds(STOP_MIN, STOP_MAX_INDOOR, CLOSE_MIN_INDOOR, CLOSE_MAX_INDOOR)}
 
-        
-
         self.lidar_worker = LidarWorker(self.thresholds_ref)
 
         self.lidar_thread = QThread()
@@ -553,95 +858,49 @@ class CombinedView(QWidget):
 
         self.lidar_worker.update_signal.connect(self.update_lidar_ui)
 
-        
+        self.tts_q = queue.Queue()
 
-        self.stack = QStackedWidget()
+        self.tts_stop_event = threading.Event()
 
-        self.mode_picker = self._create_mode_picker()
+        self.tts_worker = TTSWorker(self.tts_q, self.tts_stop_event)
 
-        self.dashboard = self._create_dashboard()
+        self.tts_worker.start()
 
-        self.stack.addWidget(self.mode_picker)
+        self.speech_gate = SpeechGate(self.tts_q)
 
-        self.stack.addWidget(self.dashboard)
+        self._build_ui()
 
-        
+        self.lidar_thread.start()
+
+        self.detect_stop_event = threading.Event()
+        self.detect_worker = BatchDetectWorker(self.camera_app, self.detect_stop_event)
+        self.detect_worker.start()
+
+
+
+    def _build_ui(self):
 
         layout = QVBoxLayout(self)
 
-        layout.addWidget(self.stack)
+        header = QHBoxLayout()
 
-        self.setLayout(layout)
+        title = QLabel("LiDAR Monitor")
 
-
-
-    def _create_mode_picker(self):
-
-        widget = QWidget()
-
-        layout = QVBoxLayout(widget)
-
-        layout.addStretch(1)
-
-        layout.addWidget(QLabel("Choose Mode"))
-
-        layout.addWidget(QLabel("Select environment before starting the LiDAR."))
-
-        
-
-        indoor_btn = QPushButton("Indoor")
-
-        indoor_btn.clicked.connect(lambda: self.start_dashboard("Indoor"))
-
-        outdoor_btn = QPushButton("Outdoor")
-
-        outdoor_btn.clicked.connect(lambda: self.start_dashboard("Outdoor"))
-
-        
-
-        layout.addWidget(indoor_btn)
-
-        layout.addWidget(outdoor_btn)
-
-        layout.addStretch(1)
-
-        return widget
-
-
-
-    def _create_dashboard(self):
-
-        widget = QWidget()
-
-        layout = QVBoxLayout(widget)
-
-
-
-        self.camera_app = CameraApp()
-
-        layout.addWidget(self.camera_app)
-
-        
-
-        # LIDAR Dashboard
-
-        lidar_dashboard = QFrame()
-
-        lidar_layout = QVBoxLayout(lidar_dashboard)
-
-
+        title.setObjectName("Title")
 
         self.lidar_status = QLabel("Starting...")
 
-        self.min_line = QLabel("—")
+        self.lidar_status.setObjectName("Status")
 
-        self.max_line = QLabel("—")
+        header.addWidget(title)
 
-        self.zone_line = QLabel("CLEAR")
+        header.addStretch(1)
 
-        self.thresh_line = QLabel(self._format_thresholds())
+        header.addWidget(self.lidar_status)
 
-        
+        controls = QHBoxLayout()
+
+        controls.addWidget(QLabel("Mode"))
 
         self.btn_indoor = QPushButton("Indoor")
 
@@ -651,7 +910,33 @@ class CombinedView(QWidget):
 
         self.btn_outdoor.clicked.connect(self.set_outdoor)
 
+        self.speech_toggle = QCheckBox("Speech")
 
+        self.speech_toggle.setChecked(True)
+
+        self.speech_toggle.setEnabled(TTS_AVAILABLE)
+
+        controls.addWidget(self.btn_indoor)
+
+        controls.addWidget(self.btn_outdoor)
+
+        controls.addStretch(1)
+
+        controls.addWidget(self.speech_toggle)
+
+        self.camera_app = CameraApp()
+
+        lidar_dashboard = QFrame()
+
+        lidar_layout = QVBoxLayout(lidar_dashboard)
+
+        self.min_line = QLabel("—")
+
+        self.max_line = QLabel("—")
+
+        self.zone_line = QLabel("CLEAR")
+
+        self.thresh_line = QLabel(self._format_thresholds())
 
         left_layout = QVBoxLayout()
 
@@ -671,47 +956,21 @@ class CombinedView(QWidget):
 
         left_layout.addWidget(self.thresh_line)
 
-
-
-        right_layout = QVBoxLayout()
-
-        right_layout.addWidget(QLabel("Mode"))
-
-        right_layout.addWidget(self.btn_indoor)
-
-        right_layout.addWidget(self.btn_outdoor)
-
-        right_layout.addStretch(1)
-
-
-
         main_lidar_layout = QHBoxLayout()
 
-        main_lidar_layout.addLayout(left_layout, stretch=3)
-
-        main_lidar_layout.addLayout(right_layout, stretch=1)
+        main_lidar_layout.addLayout(left_layout, stretch=1)
 
         lidar_layout.addLayout(main_lidar_layout)
 
-        
+        layout.addLayout(header)
+
+        layout.addLayout(controls)
+
+        layout.addWidget(self.camera_app)
 
         layout.addWidget(lidar_dashboard)
 
-        
-
-        return widget
-
-    
-
-    def start_dashboard(self, mode):
-
-        if mode == "Outdoor": self.set_outdoor()
-
-        else: self.set_indoor()
-
-        self.lidar_thread.start()
-
-        self.stack.setCurrentWidget(self.dashboard)
+        self.set_indoor()
 
 
 
@@ -751,25 +1010,39 @@ class CombinedView(QWidget):
 
         self.lidar_status.setText("OK" if upd.status == "OK" else upd.status)
 
-        if upd.min_dist is not None: self.min_line.setText(f"{upd.min_dist:.0f} mm @ {upd.min_angle:.1f}°")
+        if upd.min_dist is not None:
 
-        else: self.min_line.setText("—")
+            self.min_line.setText(f"{upd.min_dist:.0f} mm @ {upd.min_angle:.1f}°")
 
-        if upd.max_dist is not None: self.max_line.setText(f"{upd.max_dist:.0f} mm @ {upd.max_angle:.1f}°")
+        else:
 
-        else: self.max_line.setText("—")
+            self.min_line.setText("—")
 
-        
+        if upd.max_dist is not None:
+
+            self.max_line.setText(f"{upd.max_dist:.0f} mm @ {upd.max_angle:.1f}°")
+
+        else:
+
+            self.max_line.setText("—")
 
         d = upd.direction or "unknown"
 
-        if upd.zone == "stop": self.zone_line.setText(f"STOP ({d})")
+        if upd.zone == "stop":
 
-        elif upd.zone == "close": self.zone_line.setText(f"CLOSE ({d})")
+            self.zone_line.setText(f"STOP ({d})")
 
-        else: self.zone_line.setText("CLEAR")
+        elif upd.zone == "close":
 
-        
+            self.zone_line.setText(f"CLOSE ({d})")
+
+        else:
+
+            self.zone_line.setText("CLEAR")
+
+        if self.speech_toggle.isChecked():
+
+            self.speech_gate.consider(upd.zone, upd.direction)
 
         self.thresh_line.setText(self._format_thresholds())
 
@@ -782,6 +1055,10 @@ class CombinedView(QWidget):
         self.lidar_thread.quit()
 
         self.lidar_thread.wait()
+
+        self.tts_stop_event.set()
+
+        self.detect_stop_event.set()
 
         if hasattr(self, 'camera_app'):
 
@@ -799,13 +1076,11 @@ class MainWindow(QMainWindow):
 
         self.setGeometry(100, 100, 800, 800)
 
-        
-
         self.main_view = CombinedView()
 
         self.setCentralWidget(self.main_view)
 
-        
+        self.batch_process = None
 
         self.setStyleSheet("""
 
@@ -821,7 +1096,7 @@ class MainWindow(QMainWindow):
 
         event.accept()
 
-        
+
 
 if __name__ == "__main__":
 
@@ -837,6 +1112,8 @@ if __name__ == "__main__":
 
     finally:
 
-        if ON_PI: GPIO.cleanup()
+        if ON_PI:
+
+            GPIO.cleanup()
 
 
