@@ -12,6 +12,7 @@ import queue
 from collections import deque, Counter
 
 from dataclasses import dataclass
+from typing import Callable
 
 
 
@@ -99,6 +100,8 @@ except Exception:
 TARGET_SIZE = 640
 
 FPS_LIMIT = 30
+STANDALONE_INPUT_INDEX = 3
+CAMERA_INDEX_RANGE = range(0, 11)
 
 
 
@@ -546,18 +549,33 @@ class SpeechGate:
 
 class CameraApp(QWidget):
 
-    def __init__(self):
+    def __init__(
+        self,
+        title: str = "Webcam",
+        camera_indices: list[int] | None = None,
+        fixed_index: int | None = None,
+        display_size: tuple[int, int] = (TARGET_SIZE, 300),
+        auto_start: bool = False,
+        show_controls: bool = True,
+        on_start: Callable[[], None] | None = None,
+        on_stop: Callable[[], None] | None = None,
+    ):
 
         super().__init__()
 
         self.cap, self.streaming, self.last_frame_time = None, False, 0.0
+        self._camera_indices = camera_indices
+        self._fixed_index = fixed_index
+        self._display_width, self._display_height = display_size
+        self._on_start = on_start
+        self._on_stop = on_stop
         self._frame_lock = threading.Lock()
         self._frame_queue = deque(maxlen=20)
         self._latest_frame = None
 
 
 
-        self.title = QLabel("Webcam")
+        self.title = QLabel(title)
 
         self.title.setObjectName("Title")
 
@@ -569,9 +587,9 @@ class CameraApp(QWidget):
 
         self.video.setText("Press Start to stream")
 
-        self.video.setMinimumSize(TARGET_SIZE, 300)
+        self.video.setMinimumSize(self._display_width, self._display_height)
 
-        self.video.setMaximumSize(TARGET_SIZE, 300)
+        self.video.setMaximumSize(self._display_width, self._display_height)
 
 
 
@@ -606,6 +624,13 @@ class CameraApp(QWidget):
         self.timer.timeout.connect(self.update_frame)
 
         self.apply_styles()
+
+        if not show_controls:
+            self.btn.setVisible(False)
+            self.status.setVisible(False)
+
+        if auto_start:
+            QTimer.singleShot(0, self.start_stream)
 
 
 
@@ -647,7 +672,13 @@ class CameraApp(QWidget):
 
         self.cap = None
 
-        for idx in range(11):
+        working_index = None
+        if self._fixed_index is not None:
+            indices = [self._fixed_index]
+        else:
+            indices = self._camera_indices if self._camera_indices is not None else list(CAMERA_INDEX_RANGE)
+
+        for idx in indices:
 
             cap = cv2.VideoCapture(idx, backend) if backend != 0 else cv2.VideoCapture(idx)
 
@@ -691,11 +722,17 @@ class CameraApp(QWidget):
 
         self.btn.setText("Stop")
 
-        self.status.setText(f"Streaming (Cam {working_index})")
+        if working_index is None:
+            self.status.setText("Streaming")
+        else:
+            self.status.setText(f"Streaming (Cam {working_index})")
 
         self.video.setText("")
 
         self.timer.start(5)
+
+        if self._on_start:
+            self._on_start()
 
 
 
@@ -718,6 +755,9 @@ class CameraApp(QWidget):
             self.cap.release()
 
             self.cap = None
+
+        if self._on_stop:
+            self._on_stop()
 
 
 
@@ -752,7 +792,7 @@ class CameraApp(QWidget):
             self._latest_frame = frame.copy()
             self._frame_queue.append(frame.copy())
 
-        frame = cv2.resize(frame, (TARGET_SIZE, 300), interpolation=cv2.INTER_AREA)
+        frame = cv2.resize(frame, (self._display_width, self._display_height), interpolation=cv2.INTER_AREA)
 
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
@@ -868,6 +908,7 @@ class CombinedView(QWidget):
 
         self.speech_gate = SpeechGate(self.tts_q)
 
+
         self._build_ui()
 
         self.lidar_thread.start()
@@ -916,6 +957,12 @@ class CombinedView(QWidget):
 
         self.speech_toggle.setEnabled(TTS_AVAILABLE)
 
+        self.secondary_toggle_btn = QPushButton("Start")
+
+        self.secondary_toggle_btn.setObjectName("PrimaryButton")
+
+        self.secondary_toggle_btn.clicked.connect(self.toggle_secondary_stream)
+
         controls.addWidget(self.btn_indoor)
 
         controls.addWidget(self.btn_outdoor)
@@ -924,7 +971,26 @@ class CombinedView(QWidget):
 
         controls.addWidget(self.speech_toggle)
 
-        self.camera_app = CameraApp()
+        controls.addWidget(self.secondary_toggle_btn)
+
+        self.standalone_camera_app = CameraApp(
+            title="Rear Camera",
+            fixed_index=STANDALONE_INPUT_INDEX,
+            display_size=(TARGET_SIZE, 300),
+            auto_start=True,
+            show_controls=False,
+        )
+
+        secondary_indices = [i for i in CAMERA_INDEX_RANGE if i != STANDALONE_INPUT_INDEX]
+        self.camera_app = CameraApp(
+            title="Image Detection",
+            camera_indices=secondary_indices,
+            display_size=(TARGET_SIZE, 300),
+            auto_start=False,
+            show_controls=False,
+        )
+
+        self.camera_app.setVisible(False)
 
         lidar_dashboard = QFrame()
 
@@ -966,11 +1032,53 @@ class CombinedView(QWidget):
 
         layout.addLayout(controls)
 
-        layout.addWidget(self.camera_app)
+        camera_row = QHBoxLayout()
+        camera_row.addWidget(self.standalone_camera_app)
+        camera_row.addWidget(self.camera_app)
+
+        layout.addLayout(camera_row)
 
         layout.addWidget(lidar_dashboard)
 
         self.set_indoor()
+
+
+
+    def toggle_secondary_stream(self):
+
+        if not self.camera_app.streaming:
+
+            self.camera_app.setVisible(True)
+
+            self.camera_app.start_stream()
+
+            if not self.camera_app.streaming:
+
+                self.camera_app.setVisible(False)
+
+                return
+
+            self.secondary_toggle_btn.setText("Stop")
+
+        else:
+
+            self.camera_app.stop_stream()
+
+            self.camera_app.setVisible(False)
+
+            self.secondary_toggle_btn.setText("Start")
+
+
+
+    def _start_aux_process(self):
+
+        return
+
+
+
+    def _stop_aux_process(self):
+
+        return
 
 
 
@@ -1064,6 +1172,12 @@ class CombinedView(QWidget):
 
             self.camera_app.stop_stream()
 
+        if hasattr(self, 'standalone_camera_app'):
+
+            self.standalone_camera_app.stop_stream()
+
+
+
 
 
 class MainWindow(QMainWindow):
@@ -1074,7 +1188,7 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("Combined GUI")
 
-        self.setGeometry(100, 100, 800, 800)
+        self.setGeometry(100, 100, 1400, 900)
 
         self.main_view = CombinedView()
 
