@@ -96,11 +96,19 @@ except Exception:
     TTS_AVAILABLE = False
 
 
-
+def find_camera_index(start=0, end=10):
+    for i in range(start, end + 1):
+        cap = cv2.VideoCapture(i)
+        if cap.isOpened():
+            cap.release()
+            return i
+        cap.release()
+    return None
+    
 TARGET_SIZE = 640
 
 FPS_LIMIT = 30
-STANDALONE_INPUT_INDEX = 3
+STANDALONE_INPUT_INDEX = find_camera_index(0, 10)
 CAMERA_INDEX_RANGE = range(0, 11)
 
 
@@ -593,7 +601,7 @@ class CameraApp(QWidget):
 
 
 
-        self.btn = QPushButton("Start")
+        self.btn = QPushButton("Front Cam")
 
         self.btn.setObjectName("PrimaryButton")
 
@@ -742,7 +750,7 @@ class CameraApp(QWidget):
 
         self.streaming = False
 
-        self.btn.setText("Start")
+        self.btn.setText("Front Cam")
 
         self.status.setText("Idle")
 
@@ -957,11 +965,17 @@ class CombinedView(QWidget):
 
         self.speech_toggle.setEnabled(TTS_AVAILABLE)
 
-        self.secondary_toggle_btn = QPushButton("Start")
+        self.secondary_toggle_btn = QPushButton("Rear Cam")
 
         self.secondary_toggle_btn.setObjectName("PrimaryButton")
 
         self.secondary_toggle_btn.clicked.connect(self.toggle_secondary_stream)
+
+        self.rear_toggle_btn = QPushButton("Front Cam")
+
+        self.rear_toggle_btn.setObjectName("PrimaryButton")
+
+        self.rear_toggle_btn.clicked.connect(self.toggle_rear_stream)
 
         controls.addWidget(self.btn_indoor)
 
@@ -973,11 +987,13 @@ class CombinedView(QWidget):
 
         controls.addWidget(self.secondary_toggle_btn)
 
+        controls.addWidget(self.rear_toggle_btn)
+
         self.standalone_camera_app = CameraApp(
             title="Rear Camera",
             fixed_index=STANDALONE_INPUT_INDEX,
             display_size=(TARGET_SIZE, 300),
-            auto_start=True,
+            auto_start=False,
             show_controls=False,
         )
 
@@ -986,11 +1002,12 @@ class CombinedView(QWidget):
             title="Image Detection",
             camera_indices=secondary_indices,
             display_size=(TARGET_SIZE, 300),
-            auto_start=False,
+            auto_start=True,
             show_controls=False,
         )
 
         self.camera_app.setVisible(False)
+        self.standalone_camera_app.setVisible(False)
 
         lidar_dashboard = QFrame()
 
@@ -1047,26 +1064,44 @@ class CombinedView(QWidget):
     def toggle_secondary_stream(self):
 
         if not self.camera_app.streaming:
-
-            self.camera_app.setVisible(True)
-
             self.camera_app.start_stream()
 
-            if not self.camera_app.streaming:
+        if not self.camera_app.streaming:
+            self.camera_app.setVisible(False)
+            self.secondary_toggle_btn.setText("Rear Cam")
+            return
 
-                self.camera_app.setVisible(False)
+        if self.camera_app.isVisible():
+            self.camera_app.setVisible(False)
+            self.secondary_toggle_btn.setText("Rear Cam")
+        else:
+            self.camera_app.setVisible(True)
+            self.secondary_toggle_btn.setText("Hide")
+
+
+    def toggle_rear_stream(self):
+
+        if not self.standalone_camera_app.streaming:
+
+            self.standalone_camera_app.setVisible(True)
+
+            self.standalone_camera_app.start_stream()
+
+            if not self.standalone_camera_app.streaming:
+
+                self.standalone_camera_app.setVisible(False)
 
                 return
 
-            self.secondary_toggle_btn.setText("Stop")
+            self.rear_toggle_btn.setText("Stop")
 
         else:
 
-            self.camera_app.stop_stream()
+            self.standalone_camera_app.stop_stream()
 
-            self.camera_app.setVisible(False)
+            self.standalone_camera_app.setVisible(False)
 
-            self.secondary_toggle_btn.setText("Start")
+            self.rear_toggle_btn.setText("Front Cam")
 
 
 
