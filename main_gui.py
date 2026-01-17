@@ -984,7 +984,7 @@ class CombinedView(QWidget):
 
         self.secondary_toggle_btn.clicked.connect(self.toggle_secondary_stream)
 
-        self.rear_toggle_btn = QPushButton("Front Cam")
+        self.rear_toggle_btn = QPushButton("Rear Cam")
 
         self.rear_toggle_btn.setObjectName("PrimaryButton")
 
@@ -1081,12 +1081,12 @@ class CombinedView(QWidget):
 
         if not self.camera_app.streaming:
             self.camera_app.setVisible(False)
-            self.secondary_toggle_btn.setText("Rear Cam")
+            self.secondary_toggle_btn.setText("Front Cam")
             return
 
         if self.camera_app.isVisible():
             self.camera_app.setVisible(False)
-            self.secondary_toggle_btn.setText("Rear Cam")
+            self.secondary_toggle_btn.setText("Front Cam")
         else:
             self.camera_app.setVisible(True)
             self.secondary_toggle_btn.setText("Hide")
@@ -1114,7 +1114,7 @@ class CombinedView(QWidget):
 
             self.standalone_camera_app.setVisible(False)
 
-            self.rear_toggle_btn.setText("Front Cam")
+            self.rear_toggle_btn.setText("Rear Cam")
 
 
     def close_app(self):
