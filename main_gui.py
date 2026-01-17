@@ -105,7 +105,10 @@ def find_camera_index(start=0, end=10):
         cap.release()
     return None
     
-TARGET_SIZE = 640
+UI_WIDTH = 800
+UI_HEIGHT = 480
+TARGET_SIZE = 360
+CAMERA_DISPLAY_SIZE = (360, 200)
 
 FPS_LIMIT = 30
 STANDALONE_INPUT_INDEX = find_camera_index(0, 10)
@@ -615,13 +618,13 @@ class CameraApp(QWidget):
 
         card = QFrame(); card.setObjectName("Card")
 
-        card_layout = QVBoxLayout(card); card_layout.setContentsMargins(18,18,18,18); card_layout.setSpacing(12)
+        card_layout = QVBoxLayout(card); card_layout.setContentsMargins(10,10,10,10); card_layout.setSpacing(8)
 
         card_layout.addWidget(self.title); card_layout.addWidget(self.video, alignment=Qt.AlignCenter)
 
         bottom = QHBoxLayout(); bottom.addWidget(self.btn); bottom.addStretch(1); bottom.addWidget(self.status)
 
-        main_layout = QVBoxLayout(self); main_layout.setContentsMargins(22,22,22,22); main_layout.setSpacing(14)
+        main_layout = QVBoxLayout(self); main_layout.setContentsMargins(12,12,12,12); main_layout.setSpacing(10)
 
         main_layout.addWidget(card); main_layout.addLayout(bottom)
 
@@ -648,11 +651,11 @@ class CameraApp(QWidget):
 
             #Card { background: #0F1620; border: 1px solid rgba(231,238,247,0.08); border-radius: 16px; }
 
-            #Title { font-size: 20px; font-weight: 700; }
+            #Title { font-size: 14px; font-weight: 700; }
 
             #Video { background: #070A0E; border: 1px solid rgba(231,238,247,0.08); border-radius: 14px; }
 
-            #PrimaryButton { background: #2B74FF; border: none; padding: 10px 14px; border-radius: 12px; font-weight: 700; min-width: 120px; }
+            #PrimaryButton { background: #2B74FF; border: none; padding: 14px 20px; border-radius: 12px; font-weight: 700; min-width: 140px; font-size: 14px; }
 
             #PrimaryButton:hover { background: #3A82FF; } #PrimaryButton:pressed { background: #1E5FE0; }
 
@@ -930,6 +933,8 @@ class CombinedView(QWidget):
     def _build_ui(self):
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
 
         header = QHBoxLayout()
 
@@ -941,11 +946,19 @@ class CombinedView(QWidget):
 
         self.lidar_status.setObjectName("Status")
 
+        self.close_btn = QPushButton("Close")
+
+        self.close_btn.setObjectName("DangerButton")
+
+        self.close_btn.clicked.connect(self.close_app)
+
         header.addWidget(title)
 
         header.addStretch(1)
 
         header.addWidget(self.lidar_status)
+
+        header.addWidget(self.close_btn)
 
         controls = QHBoxLayout()
 
@@ -992,7 +1005,7 @@ class CombinedView(QWidget):
         self.standalone_camera_app = CameraApp(
             title="Rear Camera",
             fixed_index=STANDALONE_INPUT_INDEX,
-            display_size=(TARGET_SIZE, 300),
+            display_size=CAMERA_DISPLAY_SIZE,
             auto_start=False,
             show_controls=False,
         )
@@ -1001,7 +1014,7 @@ class CombinedView(QWidget):
         self.camera_app = CameraApp(
             title="Image Detection",
             camera_indices=secondary_indices,
-            display_size=(TARGET_SIZE, 300),
+            display_size=CAMERA_DISPLAY_SIZE,
             auto_start=True,
             show_controls=False,
         )
@@ -1102,6 +1115,11 @@ class CombinedView(QWidget):
             self.standalone_camera_app.setVisible(False)
 
             self.rear_toggle_btn.setText("Front Cam")
+
+
+    def close_app(self):
+
+        QApplication.instance().quit()
 
 
 
@@ -1223,7 +1241,7 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("Combined GUI")
 
-        self.setGeometry(100, 100, 1400, 900)
+        self.resize(UI_WIDTH, UI_HEIGHT)
 
         self.main_view = CombinedView()
 
@@ -1233,7 +1251,10 @@ class MainWindow(QMainWindow):
 
         self.setStyleSheet("""
 
-            QWidget { background: #0B0F14; color: #E7EEF7; font-family: -apple-system, Segoe UI, Roboto; font-size: 14px; }
+            QWidget { background: #0B0F14; color: #E7EEF7; font-family: -apple-system, Segoe UI, Roboto; font-size: 11px; }
+            QPushButton { padding: 12px 18px; min-height: 44px; font-size: 14px; }
+            #DangerButton { background: #D64545; border: none; padding: 12px 18px; border-radius: 10px; font-weight: 700; min-width: 120px; }
+            #DangerButton:hover { background: #E05454; } #DangerButton:pressed { background: #B83A3A; }
 
         """)
 
@@ -1255,7 +1276,7 @@ if __name__ == "__main__":
 
         window = MainWindow()
 
-        window.show()
+        window.showFullScreen()
 
         sys.exit(app.exec())
 
