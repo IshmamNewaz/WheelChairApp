@@ -978,7 +978,7 @@ class CombinedView(QWidget):
 
         self.speech_toggle.setEnabled(TTS_AVAILABLE)
 
-        self.secondary_toggle_btn = QPushButton("Rear Cam")
+        self.secondary_toggle_btn = QPushButton("Front Cam")
 
         self.secondary_toggle_btn.setObjectName("PrimaryButton")
 
