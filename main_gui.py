@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 
     QApplication, QWidget, QLabel, QPushButton,
 
-    QVBoxLayout, QHBoxLayout, QFrame, QMainWindow, QCheckBox
+    QVBoxLayout, QHBoxLayout, QFrame, QMainWindow, QCheckBox, QSizePolicy
 
 )
 
@@ -602,9 +602,9 @@ class CameraApp(QWidget):
 
         self.video.setText("Press Start to stream")
 
-        self.video.setMinimumSize(self._display_width, self._display_height)
+        self.video.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        self.video.setMaximumSize(self._display_width, self._display_height)
+        self.video.setMinimumSize(1, 1)
 
 
 
@@ -643,6 +643,11 @@ class CameraApp(QWidget):
         if not show_controls:
             self.btn.setVisible(False)
             self.status.setVisible(False)
+            self.title.setVisible(False)
+            card_layout.setContentsMargins(0, 0, 0, 0)
+            card_layout.setSpacing(0)
+            main_layout.setContentsMargins(0, 0, 0, 0)
+            main_layout.setSpacing(0)
 
         if auto_start:
             QTimer.singleShot(0, self.start_stream)
@@ -808,7 +813,11 @@ class CameraApp(QWidget):
             self._latest_frame = frame.copy()
             self._frame_queue.append(frame.copy())
 
-        frame = cv2.resize(frame, (self._display_width, self._display_height), interpolation=cv2.INTER_AREA)
+        target_w = max(1, self.video.width())
+        target_h = max(1, self.video.height())
+        if target_w <= 1 or target_h <= 1:
+            target_w, target_h = self._display_width, self._display_height
+        frame = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_AREA)
 
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
@@ -938,8 +947,8 @@ class CombinedView(QWidget):
     def _build_ui(self):
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
         self.lidar_status = QLabel("Starting...")
         self.lidar_status.setObjectName("Status")
@@ -1025,6 +1034,7 @@ class CombinedView(QWidget):
 
         camera_row = QHBoxLayout()
         camera_row.setContentsMargins(0, 0, 0, 0)
+        camera_row.setSpacing(0)
         camera_row.addWidget(self.standalone_camera_app)
         camera_row.addWidget(self.camera_app)
         layout.addLayout(camera_row, stretch=1)
