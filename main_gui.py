@@ -111,8 +111,12 @@ TARGET_SIZE = 360
 CAMERA_DISPLAY_SIZE = (360, 200)
 
 FPS_LIMIT = 30
-STANDALONE_INPUT_INDEX = find_camera_index(0, 10)
-CAMERA_INDEX_RANGE = range(0, 11)
+FRONT_CAMERA_DEVICE = "/dev/v4l/by-id/usb-046d_0825_8E8080B0-video-index0"
+REAR_CAMERA_DEVICE  = "/dev/v4l/by-id/usb-hampo_A4tech_HD_720P_PC_Camera_SN0002-video-index0"
+
+STANDALONE_INPUT_INDEX = REAR_CAMERA_DEVICE
+CAMERA_INDEX_RANGE = [FRONT_CAMERA_DEVICE]
+
 
 
 
@@ -138,7 +142,7 @@ GPIO.setwarnings(False)
 
 GPIO.setmode(GPIO.BCM)
 
-PIN_R, PIN_Y, PIN_G = 16, 21, 12
+PIN_R, PIN_Y, PIN_G = 16, 20, 21
 
 GPIO.setup(PIN_R, GPIO.OUT, initial=GPIO.LOW)
 
@@ -691,7 +695,8 @@ class CameraApp(QWidget):
 
         for idx in indices:
 
-            cap = cv2.VideoCapture(idx, backend) if backend != 0 else cv2.VideoCapture(idx)
+            # On Raspberry Pi/Linux, force V4L2 for reliability
+            cap = cv2.VideoCapture(idx, cv2.CAP_V4L2)
 
             if cap.isOpened():
 
@@ -1003,21 +1008,22 @@ class CombinedView(QWidget):
         controls.addWidget(self.rear_toggle_btn)
 
         self.standalone_camera_app = CameraApp(
-            title="Rear Camera",
-            fixed_index=STANDALONE_INPUT_INDEX,
-            display_size=CAMERA_DISPLAY_SIZE,
-            auto_start=False,
-            show_controls=False,
+        title="Rear Camera",
+        fixed_index=STANDALONE_INPUT_INDEX,  # now a device path
+        display_size=CAMERA_DISPLAY_SIZE,
+        auto_start=False,
+        show_controls=False,
         )
 
-        secondary_indices = [i for i in CAMERA_INDEX_RANGE if i != STANDALONE_INPUT_INDEX]
+
         self.camera_app = CameraApp(
-            title="Image Detection",
-            camera_indices=secondary_indices,
-            display_size=CAMERA_DISPLAY_SIZE,
-            auto_start=True,
-            show_controls=False,
+        title="Image Detection",
+        camera_indices=CAMERA_INDEX_RANGE,   # now list with 1 fixed device path
+        display_size=CAMERA_DISPLAY_SIZE,
+        auto_start=True,
+        show_controls=False,
         )
+
 
         self.camera_app.setVisible(False)
         self.standalone_camera_app.setVisible(False)
