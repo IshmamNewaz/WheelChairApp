@@ -1257,8 +1257,8 @@ class MainWindow(QMainWindow):
 
         self.setStyleSheet("""
 
-            QWidget { background: #0B0F14; color: #E7EEF7; font-family: -apple-system, Segoe UI, Roboto; font-size: 11px; }
-            QPushButton { padding: 12px 18px; min-height: 44px; font-size: 14px; }
+            QWidget { background: #0B0F14; color: #E7EEF7; font-family: -apple-system, Segoe UI, Roboto; font-size: 20px; }
+            QPushButton { padding: 12px 18px; min-height: 60px; font-size: 44px; background: #36a9f3;}
             #DangerButton { background: #D64545; border: none; padding: 12px 18px; border-radius: 10px; font-weight: 700; min-width: 120px; }
             #DangerButton:hover { background: #E05454; } #DangerButton:pressed { background: #B83A3A; }
 
