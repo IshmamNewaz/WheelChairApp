@@ -108,7 +108,7 @@ def find_camera_index(start=0, end=10):
 UI_WIDTH = 800
 UI_HEIGHT = 480
 TARGET_SIZE = 360
-CAMERA_DISPLAY_SIZE = (360, 200)
+CAMERA_DISPLAY_SIZE = (UI_WIDTH, UI_HEIGHT - 120)
 
 FPS_LIMIT = 30
 FRONT_CAMERA_DEVICE = "/dev/v4l/by-id/usb-046d_0825_8E8080B0-video-index0"
@@ -941,75 +941,34 @@ class CombinedView(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
 
-        header = QHBoxLayout()
-
-        title = QLabel("LiDAR Monitor")
-
-        title.setObjectName("Title")
-
         self.lidar_status = QLabel("Starting...")
-
         self.lidar_status.setObjectName("Status")
 
-        self.close_btn = QPushButton("Close")
-
-        self.close_btn.setObjectName("DangerButton")
-
-        self.close_btn.clicked.connect(self.close_app)
-
-        header.addWidget(title)
-
-        header.addStretch(1)
-
-        header.addWidget(self.lidar_status)
-
-        header.addWidget(self.close_btn)
-
-        controls = QHBoxLayout()
-
-        controls.addWidget(QLabel("Mode"))
-
         self.btn_indoor = QPushButton("Indoor")
-
         self.btn_indoor.clicked.connect(self.set_indoor)
 
         self.btn_outdoor = QPushButton("Outdoor")
-
         self.btn_outdoor.clicked.connect(self.set_outdoor)
 
         self.speech_toggle = QCheckBox("Speech")
-
         self.speech_toggle.setChecked(True)
-
         self.speech_toggle.setEnabled(TTS_AVAILABLE)
 
         self.secondary_toggle_btn = QPushButton("Front Cam")
-
         self.secondary_toggle_btn.setObjectName("PrimaryButton")
-
         self.secondary_toggle_btn.clicked.connect(self.toggle_secondary_stream)
 
         self.rear_toggle_btn = QPushButton("Rear Cam")
-
         self.rear_toggle_btn.setObjectName("PrimaryButton")
-
         self.rear_toggle_btn.clicked.connect(self.toggle_rear_stream)
 
-        controls.addWidget(self.btn_indoor)
-
-        controls.addWidget(self.btn_outdoor)
-
-        controls.addStretch(1)
-
-        controls.addWidget(self.speech_toggle)
-
-        controls.addWidget(self.secondary_toggle_btn)
-
-        controls.addWidget(self.rear_toggle_btn)
+        self.close_btn = QPushButton("Close")
+        self.close_btn.setObjectName("DangerButton")
+        self.close_btn.clicked.connect(self.close_app)
 
         self.standalone_camera_app = CameraApp(
         title="Rear Camera",
-        fixed_index=STANDALONE_INPUT_INDEX,  # now a device path
+        fixed_index=STANDALONE_INPUT_INDEX,
         display_size=CAMERA_DISPLAY_SIZE,
         auto_start=False,
         show_controls=False,
@@ -1017,15 +976,15 @@ class CombinedView(QWidget):
 
 
         self.camera_app = CameraApp(
-        title="Image Detection",
-        camera_indices=CAMERA_INDEX_RANGE,   # now list with 1 fixed device path
+        title="Front Camera",
+        camera_indices=CAMERA_INDEX_RANGE,
         display_size=CAMERA_DISPLAY_SIZE,
         auto_start=True,
         show_controls=False,
         )
 
 
-        self.camera_app.setVisible(False)
+        self.camera_app.setVisible(True)
         self.standalone_camera_app.setVisible(False)
 
         lidar_dashboard = QFrame()
@@ -1064,62 +1023,62 @@ class CombinedView(QWidget):
 
         lidar_layout.addLayout(main_lidar_layout)
 
-        layout.addLayout(header)
-
-        layout.addLayout(controls)
-
         camera_row = QHBoxLayout()
+        camera_row.setContentsMargins(0, 0, 0, 0)
         camera_row.addWidget(self.standalone_camera_app)
         camera_row.addWidget(self.camera_app)
+        layout.addLayout(camera_row, stretch=1)
 
-        layout.addLayout(camera_row)
+        controls = QHBoxLayout()
+        controls.addWidget(self.btn_indoor)
+        controls.addWidget(self.btn_outdoor)
+        controls.addWidget(self.speech_toggle)
+        controls.addStretch(1)
+        controls.addWidget(self.secondary_toggle_btn)
+        controls.addWidget(self.rear_toggle_btn)
+        controls.addWidget(self.close_btn)
+        layout.addLayout(controls)
 
-        layout.addWidget(lidar_dashboard)
+        #layout.addWidget(lidar_dashboard)
 
         self.set_indoor()
 
 
 
     def toggle_secondary_stream(self):
-
         if not self.camera_app.streaming:
             self.camera_app.start_stream()
 
         if not self.camera_app.streaming:
-            self.camera_app.setVisible(False)
-            self.secondary_toggle_btn.setText("Front Cam")
             return
 
-        if self.camera_app.isVisible():
-            self.camera_app.setVisible(False)
-            self.secondary_toggle_btn.setText("Front Cam")
-        else:
-            self.camera_app.setVisible(True)
-            self.secondary_toggle_btn.setText("Hide")
+        if self.standalone_camera_app.streaming:
+            self.standalone_camera_app.stop_stream()
+        self.standalone_camera_app.setVisible(False)
+
+        self.camera_app.setVisible(True)
+        self.secondary_toggle_btn.setText("Front Cam")
+        self.rear_toggle_btn.setText("Rear Cam")
 
 
     def toggle_rear_stream(self):
-
         if not self.standalone_camera_app.streaming:
-
             self.standalone_camera_app.setVisible(True)
-
             self.standalone_camera_app.start_stream()
 
             if not self.standalone_camera_app.streaming:
-
                 self.standalone_camera_app.setVisible(False)
-
                 return
 
-            self.rear_toggle_btn.setText("Stop")
+            if self.camera_app.streaming:
+                self.camera_app.stop_stream()
+            self.camera_app.setVisible(False)
 
+            self.rear_toggle_btn.setText("Rear Cam")
+            self.secondary_toggle_btn.setText("Front Cam")
         else:
-
             self.standalone_camera_app.stop_stream()
-
             self.standalone_camera_app.setVisible(False)
-
             self.rear_toggle_btn.setText("Rear Cam")
 
 
