@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 
     QApplication, QWidget, QLabel, QPushButton,
 
-    QVBoxLayout, QHBoxLayout, QFrame, QMainWindow, QCheckBox
+    QVBoxLayout, QHBoxLayout, QFrame, QMainWindow
 
 )
 
@@ -978,11 +978,17 @@ class CombinedView(QWidget):
 
         self.btn_outdoor.clicked.connect(self.set_outdoor)
 
-        self.speech_toggle = QCheckBox("Speech")
+        self.speech_toggle = QPushButton()
 
-        self.speech_toggle.setChecked(True)
+        self.speech_toggle.setCheckable(True)
+
+        self.speech_toggle.setChecked(TTS_AVAILABLE)
 
         self.speech_toggle.setEnabled(TTS_AVAILABLE)
+
+        self.speech_toggle.toggled.connect(self._on_speech_toggled)
+
+        self._update_speech_toggle_text(self.speech_toggle.isChecked())
 
         self.secondary_toggle_btn = QPushButton("Front Cam")
 
@@ -1104,7 +1110,6 @@ class CombinedView(QWidget):
         if not self.standalone_camera_app.streaming:
 
             self.standalone_camera_app.setVisible(True)
-
             self.standalone_camera_app.start_stream()
 
             if not self.standalone_camera_app.streaming:
@@ -1122,6 +1127,16 @@ class CombinedView(QWidget):
             self.standalone_camera_app.setVisible(False)
 
             self.rear_toggle_btn.setText("Rear Cam")
+
+
+    def _update_speech_toggle_text(self, enabled: bool):
+
+        self.speech_toggle.setText("Mute" if enabled else "Speak")
+
+
+    def _on_speech_toggled(self, checked: bool):
+
+        self._update_speech_toggle_text(checked)
 
 
     def close_app(self):
