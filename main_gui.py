@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 
     QApplication, QWidget, QLabel, QPushButton,
 
-    QVBoxLayout, QHBoxLayout, QFrame, QMainWindow, QCheckBox, QSizePolicy
+    QVBoxLayout, QHBoxLayout, QFrame, QMainWindow, QCheckBox
 
 )
 
@@ -108,7 +108,8 @@ def find_camera_index(start=0, end=10):
 UI_WIDTH = 800
 UI_HEIGHT = 480
 TARGET_SIZE = 360
-CAMERA_DISPLAY_SIZE = (UI_WIDTH, UI_HEIGHT - 120)
+CAMERA_DISPLAY_SIZE = (1000, 480)
+# UI_WIDTH,UI_HEIGHT
 
 FPS_LIMIT = 30
 FRONT_CAMERA_DEVICE = "/dev/v4l/by-id/usb-046d_0825_8E8080B0-video-index0"
@@ -602,9 +603,9 @@ class CameraApp(QWidget):
 
         self.video.setText("Press Start to stream")
 
-        self.video.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.video.setMinimumSize(self._display_width, self._display_height)
 
-        self.video.setMinimumSize(1, 1)
+        self.video.setMaximumSize(self._display_width, self._display_height)
 
 
 
@@ -643,11 +644,6 @@ class CameraApp(QWidget):
         if not show_controls:
             self.btn.setVisible(False)
             self.status.setVisible(False)
-            self.title.setVisible(False)
-            card_layout.setContentsMargins(0, 0, 0, 0)
-            card_layout.setSpacing(0)
-            main_layout.setContentsMargins(0, 0, 0, 0)
-            main_layout.setSpacing(0)
 
         if auto_start:
             QTimer.singleShot(0, self.start_stream)
@@ -813,11 +809,7 @@ class CameraApp(QWidget):
             self._latest_frame = frame.copy()
             self._frame_queue.append(frame.copy())
 
-        target_w = max(1, self.video.width())
-        target_h = max(1, self.video.height())
-        if target_w <= 1 or target_h <= 1:
-            target_w, target_h = self._display_width, self._display_height
-        frame = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_AREA)
+        frame = cv2.resize(frame, (self._display_width, self._display_height), interpolation=cv2.INTER_AREA)
 
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
@@ -947,37 +939,78 @@ class CombinedView(QWidget):
     def _build_ui(self):
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+
+        header = QHBoxLayout()
+
+        title = QLabel("LiDAR Monitor")
+
+        title.setObjectName("Title")
 
         self.lidar_status = QLabel("Starting...")
+
         self.lidar_status.setObjectName("Status")
 
+        self.close_btn = QPushButton("Close")
+
+        self.close_btn.setObjectName("DangerButton")
+
+        self.close_btn.clicked.connect(self.close_app)
+
+        header.addWidget(title)
+
+        header.addStretch(1)
+
+        header.addWidget(self.lidar_status)
+
+        header.addWidget(self.close_btn)
+
+        controls = QHBoxLayout()
+
+        controls.addWidget(QLabel("Mode"))
+
         self.btn_indoor = QPushButton("Indoor")
+
         self.btn_indoor.clicked.connect(self.set_indoor)
 
         self.btn_outdoor = QPushButton("Outdoor")
+
         self.btn_outdoor.clicked.connect(self.set_outdoor)
 
         self.speech_toggle = QCheckBox("Speech")
+
         self.speech_toggle.setChecked(True)
+
         self.speech_toggle.setEnabled(TTS_AVAILABLE)
 
         self.secondary_toggle_btn = QPushButton("Front Cam")
+
         self.secondary_toggle_btn.setObjectName("PrimaryButton")
+
         self.secondary_toggle_btn.clicked.connect(self.toggle_secondary_stream)
 
         self.rear_toggle_btn = QPushButton("Rear Cam")
+
         self.rear_toggle_btn.setObjectName("PrimaryButton")
+
         self.rear_toggle_btn.clicked.connect(self.toggle_rear_stream)
 
-        self.close_btn = QPushButton("Close")
-        self.close_btn.setObjectName("DangerButton")
-        self.close_btn.clicked.connect(self.close_app)
+        controls.addWidget(self.btn_indoor)
+
+        controls.addWidget(self.btn_outdoor)
+
+        controls.addStretch(1)
+
+        controls.addWidget(self.speech_toggle)
+
+        # controls.addWidget(self.secondary_toggle_btn)
+
+        controls.addWidget(self.rear_toggle_btn)
 
         self.standalone_camera_app = CameraApp(
         title="Rear Camera",
-        fixed_index=STANDALONE_INPUT_INDEX,
+        fixed_index=STANDALONE_INPUT_INDEX,  # now a device path
         display_size=CAMERA_DISPLAY_SIZE,
         auto_start=False,
         show_controls=False,
@@ -985,15 +1018,15 @@ class CombinedView(QWidget):
 
 
         self.camera_app = CameraApp(
-        title="Front Camera",
-        camera_indices=CAMERA_INDEX_RANGE,
+        title="Image Detection",
+        camera_indices=CAMERA_INDEX_RANGE,   # now list with 1 fixed device path
         display_size=CAMERA_DISPLAY_SIZE,
         auto_start=True,
         show_controls=False,
         )
 
 
-        self.camera_app.setVisible(True)
+        self.camera_app.setVisible(False)
         self.standalone_camera_app.setVisible(False)
 
         lidar_dashboard = QFrame()
@@ -1030,65 +1063,64 @@ class CombinedView(QWidget):
 
         main_lidar_layout.addLayout(left_layout, stretch=1)
 
-        lidar_layout.addLayout(main_lidar_layout)
+        #lidar_layout.addLayout(main_lidar_layout)
 
-        camera_row = QHBoxLayout()
-        camera_row.setContentsMargins(0, 0, 0, 0)
-        camera_row.setSpacing(0)
-        camera_row.addWidget(self.standalone_camera_app)
-        camera_row.addWidget(self.camera_app)
-        layout.addLayout(camera_row, stretch=1)
+        layout.addLayout(header)
 
-        controls = QHBoxLayout()
-        controls.addWidget(self.btn_indoor)
-        controls.addWidget(self.btn_outdoor)
-        controls.addWidget(self.speech_toggle)
-        controls.addStretch(1)
-        controls.addWidget(self.secondary_toggle_btn)
-        controls.addWidget(self.rear_toggle_btn)
-        controls.addWidget(self.close_btn)
         layout.addLayout(controls)
 
-        #layout.addWidget(lidar_dashboard)
+        camera_row = QHBoxLayout()
+        camera_row.addWidget(self.standalone_camera_app)
+        camera_row.addWidget(self.camera_app)
+
+        layout.addLayout(camera_row)
+
+        layout.addWidget(lidar_dashboard)
 
         self.set_indoor()
 
 
 
     def toggle_secondary_stream(self):
+
         if not self.camera_app.streaming:
             self.camera_app.start_stream()
 
         if not self.camera_app.streaming:
+            self.camera_app.setVisible(False)
+            self.secondary_toggle_btn.setText("Front Cam")
             return
 
-        if self.standalone_camera_app.streaming:
-            self.standalone_camera_app.stop_stream()
-        self.standalone_camera_app.setVisible(False)
-
-        self.camera_app.setVisible(True)
-        self.secondary_toggle_btn.setText("Front Cam")
-        self.rear_toggle_btn.setText("Rear Cam")
+        if self.camera_app.isVisible():
+            self.camera_app.setVisible(False)
+            self.secondary_toggle_btn.setText("Front Cam")
+        else:
+            self.camera_app.setVisible(True)
+            self.secondary_toggle_btn.setText("Hide")
 
 
     def toggle_rear_stream(self):
+
         if not self.standalone_camera_app.streaming:
+
             self.standalone_camera_app.setVisible(True)
+
             self.standalone_camera_app.start_stream()
 
             if not self.standalone_camera_app.streaming:
+
                 self.standalone_camera_app.setVisible(False)
+
                 return
 
-            if self.camera_app.streaming:
-                self.camera_app.stop_stream()
-            self.camera_app.setVisible(False)
+            self.rear_toggle_btn.setText("Stop")
 
-            self.rear_toggle_btn.setText("Rear Cam")
-            self.secondary_toggle_btn.setText("Front Cam")
         else:
+
             self.standalone_camera_app.stop_stream()
+
             self.standalone_camera_app.setVisible(False)
+
             self.rear_toggle_btn.setText("Rear Cam")
 
 
