@@ -341,28 +341,21 @@ class SpeechGate:
     def consider(self, zone: str, direction: str | None):
         if zone not in ("close", "stop"):
             self.last_key = None
-            self.last_spoken_time = 0.0
             return
 
         if direction is None:
             direction = "front"
 
         now = time.time()
-        key = (zone, direction)
 
-        if self.last_key != key:
-            phrase = self._phrase(zone, direction)
-            if phrase:
-                self.tts_q.put(phrase)
-                self.last_key = key
-                self.last_spoken_time = now
+        if self.last_spoken_time and (now - self.last_spoken_time) < SPEAK_REPEAT_SECONDS:
             return
 
-        if now - self.last_spoken_time >= SPEAK_REPEAT_SECONDS:
-            phrase = self._phrase(zone, direction)
-            if phrase:
-                self.tts_q.put(phrase)
-                self.last_spoken_time = now
+        phrase = self._phrase(zone, direction)
+        if phrase:
+            self.tts_q.put(phrase)
+            self.last_key = (zone, direction)
+            self.last_spoken_time = now
 
 
 
