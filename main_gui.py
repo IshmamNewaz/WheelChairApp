@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 
-
+frontcambutton_enable=True
 import cv2
 
 import numpy as np
@@ -883,15 +883,32 @@ class BatchDetectWorker(threading.Thread):
 
             common_result = Counter(batch_results).most_common(1)[0][0]
             print(f"Most common result: {common_result}\n")
-
+            # if TTS_AVAILABLE:
+            #     try:
+            #         engine = pyttsx3.init()
+            #         engine.setProperty("rate", SPEAK_RATE)
+            #         engine.say(f"{last_common} detected")
+            #         print(f"{last_common} detected")
+            #         engine.runAndWait()
+            #     except Exception:
+            #         pass
             current_time = time.time()
-            if common_result != last_common:
+            if common_result != last_common and last_common != "unknown":
                 last_common = common_result
                 last_confirm_time = 0.0
 
             if last_common is not None and last_common != "unknown" and current_time - last_confirm_time >= 10:
                 print(f"\n{last_common} is confirmed")
                 last_confirm_time = current_time
+                if TTS_AVAILABLE:
+                    try:
+                        engine = pyttsx3.init()
+                        engine.setProperty("rate", SPEAK_RATE)
+                        engine.say(f"h{last_common} detected")
+                        print(f"{last_common} detected")
+                        engine.runAndWait()
+                    except Exception:
+                        pass
 
             time.sleep(0.5)
 
@@ -1010,7 +1027,8 @@ class CombinedView(QWidget):
 
         controls.addWidget(self.speech_toggle)
 
-        # controls.addWidget(self.secondary_toggle_btn)
+        if frontcambutton_enable:
+            controls.addWidget(self.secondary_toggle_btn)
 
         controls.addWidget(self.rear_toggle_btn)
 
