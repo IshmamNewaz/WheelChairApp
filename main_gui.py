@@ -339,13 +339,13 @@ class SpeechGate:
         return None
 
     def consider(self, zone: str, direction: str | None):
-        if direction is None:
-            return
-
         if zone not in ("close", "stop"):
             self.last_key = None
             self.last_spoken_time = 0.0
             return
+
+        if direction is None:
+            direction = "front"
 
         now = time.time()
         key = (zone, direction)
@@ -526,10 +526,11 @@ class CameraApp(QWidget):
 
 
 class BatchDetectWorker(threading.Thread):
-    def __init__(self, camera_app: CameraApp, stop_event: threading.Event):
+    def __init__(self, camera_app: CameraApp, stop_event: threading.Event, tts_q: queue.Queue | None = None):
         super().__init__(daemon=True)
         self.camera_app = camera_app
         self.stop_event = stop_event
+        self.tts_q = tts_q
         self.model = None
         self.img_size = 640
         self.confidence = 0.4
@@ -554,6 +555,14 @@ class BatchDetectWorker(threading.Thread):
             cls = int(r.boxes.cls[0])
             return r.names.get(cls, "unknown")
         return "unknown"
+
+    def _speak(self, message: str):
+        if not message or not TTS_AVAILABLE or self.tts_q is None:
+            return
+        try:
+            self.tts_q.put(message)
+        except Exception:
+            pass
 
     def run(self):
         if not self._load_model():
@@ -584,22 +593,14 @@ class BatchDetectWorker(threading.Thread):
             #     except Exception:
             #         pass
             current_time = time.time()
-            if common_result != last_common and last_common != "unknown":
+            if common_result != last_common and common_result != "unknown":
                 last_common = common_result
                 last_confirm_time = 0.0
 
             if last_common is not None and last_common != "unknown" and current_time - last_confirm_time >= 10:
                 print(f"\n{last_common} is confirmed")
                 last_confirm_time = current_time
-                if TTS_AVAILABLE:
-                    try:
-                        engine = pyttsx3.init()
-                        engine.setProperty("rate", SPEAK_RATE)
-                        engine.say(f"h{last_common} detected")
-                        print(f"{last_common} detected")
-                        engine.runAndWait()
-                    except Exception:
-                        pass
+                self._speak(f"{last_common} detected")
 
             time.sleep(0.5)
 
@@ -623,7 +624,7 @@ class CombinedView(QWidget):
         self._build_ui()
         self.lidar_thread.start()
         self.detect_stop_event = threading.Event()
-        self.detect_worker = BatchDetectWorker(self.camera_app, self.detect_stop_event)
+        self.detect_worker = BatchDetectWorker(self.camera_app, self.detect_stop_event, self.tts_q)
         self.detect_worker.start()
 
     def _build_ui(self):
