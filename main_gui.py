@@ -329,7 +329,7 @@ class SpeechGate:
     def __init__(self, tts_q: queue.Queue):
         self.tts_q = tts_q
         self.last_key: tuple[str, str] | None = None
-        self.last_spoken_time: float = 0.0
+        self.last_spoken_by_key: dict[tuple[str, str], float] = {}
 
     def _phrase(self, zone: str, direction: str) -> str | None:
         if zone == "close":
@@ -347,15 +347,17 @@ class SpeechGate:
             direction = "front"
 
         now = time.time()
+        key = (zone, direction)
+        last_time = self.last_spoken_by_key.get(key, 0.0)
 
-        if self.last_spoken_time and (now - self.last_spoken_time) < SPEAK_REPEAT_SECONDS:
+        if last_time and (now - last_time) < SPEAK_REPEAT_SECONDS:
             return
 
         phrase = self._phrase(zone, direction)
         if phrase:
             self.tts_q.put(phrase)
-            self.last_key = (zone, direction)
-            self.last_spoken_time = now
+            self.last_key = key
+            self.last_spoken_by_key[key] = now
 
 
 
