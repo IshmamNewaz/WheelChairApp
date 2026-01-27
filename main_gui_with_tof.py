@@ -6,9 +6,9 @@ import threading
 import queue
 from collections import deque, Counter
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Optional, Deque, Tuple
 
-frontcambutton_enable=True
+frontcambutton_enable=False
 import cv2
 import numpy as np
 
@@ -57,6 +57,21 @@ except Exception:
     TTS_AVAILABLE = False
 
 
+# -----------------------------
+# CODE 2 (ToF VL53L1X) optional imports
+# -----------------------------
+try:
+    import board
+    import busio
+    import adafruit_vl53l1x
+    TOF_AVAILABLE = True
+except Exception:
+    board = None
+    busio = None
+    adafruit_vl53l1x = None
+    TOF_AVAILABLE = False
+
+
 def find_camera_index(start=0, end=10):
     for i in range(start, end + 1):
         cap = cv2.VideoCapture(i)
@@ -66,8 +81,8 @@ def find_camera_index(start=0, end=10):
         cap.release()
     return None
 
-UI_WIDTH = 800
-UI_HEIGHT = 480
+UI_WIDTH = 200
+UI_HEIGHT = 280
 TARGET_SIZE = 360
 CAMERA_DISPLAY_SIZE = (800, 480)
 # UI_WIDTH,UI_HEIGHT
@@ -138,6 +153,272 @@ class LidarUpdate:
     direction: str | None = None
     thresholds: Thresholds | None = None
     status: str = "OK"
+
+
+# -----------------------------
+# CODE 2 (ToF) constants + dataclasses + worker
+# -----------------------------
+MUX_ADDR = 0x70
+TOF1_CH = 0
+TOF2_CH = 1
+
+AVG_WINDOW_S = 0.30
+PERIOD_S = 0.10
+SETTLE_S = 0.005
+IGNORE_BELOW_MM = 300
+
+INDOOR_IMMINENT_MM = 600
+INDOOR_NEARBY_MM = 1500
+
+OUTDOOR_IMMINENT_MM = 900
+OUTDOOR_NEARBY_MM = 2100
+
+JUMP_THRESHOLD_MM = 500
+COMMIT_COUNT = 3
+
+@dataclass
+class FilterState:
+    last_filtered: Optional[int] = None
+    candidate_value: Optional[int] = None
+    candidate_count: int = 0
+
+@dataclass
+class SensorRuntime:
+    ch: int
+    sensor: "adafruit_vl53l1x.VL53L1X"
+    filt: FilterState
+    window: Deque[Tuple[float, int]]
+    held_avg_mm: Optional[int] = None
+    held_status: Optional[str] = None
+
+@dataclass
+class ToFUpdate:
+    tof1_mm: Optional[int] = None
+    tof1_status: str = "No data"
+    tof2_mm: Optional[int] = None
+    tof2_status: str = "No data"
+    overall: Optional[str] = None
+    status: str = "OK"
+    mode: str = "indoor"
+
+def select_channel(i2c, ch: int) -> None:
+    if not 0 <= ch <= 7:
+        raise ValueError("Mux channel must be 0..7")
+    i2c.writeto(MUX_ADDR, bytes([1 << ch]))
+    time.sleep(SETTLE_S)
+
+def disable_all(i2c) -> None:
+    i2c.writeto(MUX_ADDR, bytes([0x00]))
+    time.sleep(SETTLE_S)
+
+def init_sensor_on_channel(i2c, ch: int):
+    select_channel(i2c, ch)
+    s = adafruit_vl53l1x.VL53L1X(i2c)
+    s.distance_mode = 2  # long range
+    s.start_ranging()
+    return s
+
+def update_filter(state: FilterState, raw_mm: int) -> int:
+    if state.last_filtered is None:
+        state.last_filtered = raw_mm
+        state.candidate_value = None
+        state.candidate_count = 0
+        return state.last_filtered
+
+    diff = abs(raw_mm - state.last_filtered)
+
+    if diff <= JUMP_THRESHOLD_MM:
+        state.last_filtered = raw_mm
+        state.candidate_value = None
+        state.candidate_count = 0
+        return state.last_filtered
+
+    if state.candidate_value is None:
+        state.candidate_value = raw_mm
+        state.candidate_count = 1
+    else:
+        if abs(raw_mm - state.candidate_value) <= JUMP_THRESHOLD_MM:
+            state.candidate_count += 1
+        else:
+            state.candidate_value = raw_mm
+            state.candidate_count = 1
+
+    if state.candidate_count >= COMMIT_COUNT and state.candidate_value is not None:
+        state.last_filtered = state.candidate_value
+        state.candidate_value = None
+        state.candidate_count = 0
+
+    return state.last_filtered
+
+def classify_indoor(mm: int) -> str:
+    if IGNORE_BELOW_MM <= mm < INDOOR_IMMINENT_MM:
+        return "Object imminent"
+    if INDOOR_IMMINENT_MM <= mm < INDOOR_NEARBY_MM:
+        return "Object nearby"
+    if mm >= INDOOR_NEARBY_MM:
+        return "Safe"
+    return "No data"
+
+def classify_outdoor(mm: int) -> str:
+    if IGNORE_BELOW_MM <= mm < OUTDOOR_IMMINENT_MM:
+        return "Object imminent"
+    if OUTDOOR_IMMINENT_MM <= mm < OUTDOOR_NEARBY_MM:
+        return "Object nearby"
+    if mm >= OUTDOOR_NEARBY_MM:
+        return "Safe"
+    return "No data"
+
+def prune_window(window: Deque[Tuple[float, int]], now: float) -> None:
+    cutoff = now - AVG_WINDOW_S
+    while window and window[0][0] < cutoff:
+        window.popleft()
+
+def compute_avg_mm(window: Deque[Tuple[float, int]]) -> Optional[int]:
+    if not window:
+        return None
+    total = sum(v for _, v in window)
+    return int(total / len(window))
+
+def read_and_update(i2c, rt: SensorRuntime, now: float) -> None:
+    select_channel(i2c, rt.ch)
+
+    if not rt.sensor.data_ready:
+        return
+
+    raw_cm = rt.sensor.distance
+    rt.sensor.clear_interrupt()
+
+    if raw_cm is None:
+        return
+
+    raw_mm = int(raw_cm * 10)
+    if raw_mm <= 0 or raw_mm < IGNORE_BELOW_MM:
+        return
+
+    filtered_mm = update_filter(rt.filt, raw_mm)
+    rt.window.append((now, filtered_mm))
+
+def resolve_output(rt: SensorRuntime, now: float, mode: str) -> Tuple[Optional[int], str]:
+    prune_window(rt.window, now)
+    avg_mm = compute_avg_mm(rt.window)
+
+    if avg_mm is not None:
+        rt.held_avg_mm = avg_mm
+        rt.held_status = classify_outdoor(avg_mm) if mode == "outdoor" else classify_indoor(avg_mm)
+
+    if rt.held_avg_mm is None or rt.held_status is None:
+        return None, "No data"
+
+    return rt.held_avg_mm, rt.held_status
+
+def status_severity(status: str) -> int:
+    if status == "Object imminent":
+        return 3
+    if status == "Object nearby":
+        return 2
+    if status == "Safe":
+        return 1
+    return 0
+
+class ToFWorker(QObject):
+    update_signal = Signal(object)  # emits ToFUpdate
+
+    def __init__(self, mode_ref: dict):
+        super().__init__()
+        self.mode_ref = mode_ref
+        self.running = False
+
+    def run(self):
+        self.running = True
+
+        if not TOF_AVAILABLE:
+            while self.running:
+                self.update_signal.emit(ToFUpdate(status="Error: ToF libs not found (board/busio/adafruit_vl53l1x)."))
+                time.sleep(2)
+            return
+
+        i2c = None
+        tof1 = tof2 = None
+        r1 = r2 = None
+
+        try:
+            i2c = busio.I2C(board.SCL, board.SDA)
+            disable_all(i2c)
+
+            tof1 = init_sensor_on_channel(i2c, TOF1_CH)
+            tof2 = init_sensor_on_channel(i2c, TOF2_CH)
+
+            r1 = SensorRuntime(ch=TOF1_CH, sensor=tof1, filt=FilterState(), window=deque())
+            r2 = SensorRuntime(ch=TOF2_CH, sensor=tof2, filt=FilterState(), window=deque())
+
+            while self.running:
+                t0 = time.monotonic()
+                mode = self.mode_ref.get("mode", "indoor")
+
+                try:
+                    read_and_update(i2c, r1, t0)
+                    read_and_update(i2c, r2, t0)
+
+                    v1, s1 = resolve_output(r1, t0, mode)
+                    v2, s2 = resolve_output(r2, t0, mode)
+
+                    candidates = []
+                    if s1 != "No data":
+                        candidates.append(s1)
+                    if s2 != "No data":
+                        candidates.append(s2)
+
+                    overall = None
+                    if candidates:
+                        overall = max(candidates, key=status_severity)
+
+                    self.update_signal.emit(
+                        ToFUpdate(
+                            tof1_mm=v1, tof1_status=s1,
+                            tof2_mm=v2, tof2_status=s2,
+                            overall=overall,
+                            status="OK",
+                            mode=mode
+                        )
+                    )
+                except Exception as e:
+                    self.update_signal.emit(ToFUpdate(status=f"Error: {e}"))
+
+                dt = time.monotonic() - t0
+                if dt < PERIOD_S:
+                    time.sleep(PERIOD_S - dt)
+
+        except Exception as e:
+            while self.running:
+                self.update_signal.emit(ToFUpdate(status=f"Error: {e}"))
+                time.sleep(2)
+
+        finally:
+            # Best-effort shutdown
+            try:
+                if i2c is not None:
+                    try:
+                        if tof1 is not None:
+                            select_channel(i2c, TOF1_CH)
+                            tof1.stop_ranging()
+                    except Exception:
+                        pass
+                    try:
+                        if tof2 is not None:
+                            select_channel(i2c, TOF2_CH)
+                            tof2.stop_ranging()
+                    except Exception:
+                        pass
+                    try:
+                        disable_all(i2c)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+    def stop(self):
+        self.running = False
+
 
 class LidarWorker(QObject):
     update_signal = Signal(LidarUpdate)
@@ -285,6 +566,8 @@ class LidarWorker(QObject):
         if state_char != self.last_led_state:
             set_led_state(state_char)
             self.last_led_state = state_char
+
+
 class TTSWorker(threading.Thread):
     def __init__(self, tts_q: queue.Queue, stop_event: threading.Event):
         super().__init__(daemon=True)
@@ -358,7 +641,6 @@ class SpeechGate:
             self.tts_q.put(phrase)
             self.last_key = key
             self.last_spoken_by_key[key] = now
-
 
 
 class CameraApp(QWidget):
@@ -578,15 +860,7 @@ class BatchDetectWorker(threading.Thread):
 
             common_result = Counter(batch_results).most_common(1)[0][0]
             print(f"Most common result: {common_result}\n")
-            # if TTS_AVAILABLE:
-            #     try:
-            #         engine = pyttsx3.init()
-            #         engine.setProperty("rate", SPEAK_RATE)
-            #         engine.say(f"{last_common} detected")
-            #         print(f"{last_common} detected")
-            #         engine.runAndWait()
-            #     except Exception:
-            #         pass
+
             current_time = time.time()
             if common_result != last_common and common_result != "unknown":
                 last_common = common_result
@@ -600,7 +874,6 @@ class BatchDetectWorker(threading.Thread):
             time.sleep(0.5)
 
 
-
 class CombinedView(QWidget):
     def __init__(self):
         super().__init__()
@@ -610,14 +883,27 @@ class CombinedView(QWidget):
         self.lidar_worker.moveToThread(self.lidar_thread)
         self.lidar_thread.started.connect(self.lidar_worker.run)
         self.lidar_worker.update_signal.connect(self.update_lidar_ui)
+
         self.tts_q = queue.Queue()
         self.tts_stop_event = threading.Event()
         self.tts_worker = TTSWorker(self.tts_q, self.tts_stop_event)
         self.tts_worker.start()
         self.speech_gate = SpeechGate(self.tts_q)
 
+        # CODE 2 (ToF) threading hooks
+        self.tof_mode_ref = {"mode": "indoor"}
+        self.tof_worker = ToFWorker(self.tof_mode_ref)
+        self.tof_thread = QThread()
+        self.tof_worker.moveToThread(self.tof_thread)
+        self.tof_thread.started.connect(self.tof_worker.run)
+
         self._build_ui()
+
+        # start threads after UI exists (so label updates are safe)
+        self.tof_worker.update_signal.connect(self.update_tof_ui)
         self.lidar_thread.start()
+        self.tof_thread.start()
+
         self.detect_stop_event = threading.Event()
         self.detect_worker = BatchDetectWorker(self.camera_app, self.detect_stop_event, self.tts_q)
         self.detect_worker.start()
@@ -626,6 +912,7 @@ class CombinedView(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
+
         header = QHBoxLayout()
         title = QLabel("LiDAR Monitor")
         title.setObjectName("Title")
@@ -638,6 +925,7 @@ class CombinedView(QWidget):
         header.addStretch(1)
         header.addWidget(self.lidar_status)
         header.addWidget(self.close_btn)
+
         controls = QHBoxLayout()
         controls.addWidget(QLabel("Mode"))
         self.btn_indoor = QPushButton("Indoor")
@@ -663,24 +951,27 @@ class CombinedView(QWidget):
         if frontcambutton_enable:
             controls.addWidget(self.secondary_toggle_btn)
         controls.addWidget(self.rear_toggle_btn)
+
         self.standalone_camera_app = CameraApp(
-        title="Rear Camera",
-        fixed_index=STANDALONE_INPUT_INDEX,  # now a device path
-        display_size=CAMERA_DISPLAY_SIZE,
-        auto_start=False,
-        show_controls=False,
+            title="Rear Camera",
+            fixed_index=STANDALONE_INPUT_INDEX,  # now a device path
+            display_size=CAMERA_DISPLAY_SIZE,
+            auto_start=False,
+            show_controls=False,
         )
 
         self.camera_app = CameraApp(
-        title="Image Detection",
-        camera_indices=CAMERA_INDEX_RANGE,   # now list with 1 fixed device path
-        display_size=CAMERA_DISPLAY_SIZE,
-        auto_start=True,
-        show_controls=False,
+            title="Image Detection",
+            camera_indices=CAMERA_INDEX_RANGE,   # now list with 1 fixed device path
+            display_size=CAMERA_DISPLAY_SIZE,
+            auto_start=True,
+            show_controls=False,
         )
 
         self.camera_app.setVisible(False)
         self.standalone_camera_app.setVisible(False)
+
+        # Existing LiDAR dashboard (unchanged)
         lidar_dashboard = QFrame()
         lidar_layout = QVBoxLayout(lidar_dashboard)
         self.min_line = QLabel("—")
@@ -699,13 +990,31 @@ class CombinedView(QWidget):
         main_lidar_layout = QHBoxLayout()
         main_lidar_layout.addLayout(left_layout, stretch=1)
         #lidar_layout.addLayout(main_lidar_layout)
+
+        # CODE 2 output panel (ToF) - added without changing existing behavior
+        tof_dashboard = QFrame()
+        tof_layout = QVBoxLayout(tof_dashboard)
+        self.tof_status = QLabel("ToF: Starting...")
+        self.tof1_line = QLabel("tof1 = — | No data")
+        self.tof2_line = QLabel("tof2 = — | No data")
+        self.tof_overall_line = QLabel("overall = —")
+        tof_layout.addWidget(QLabel("ToF (VL53L1X)"))
+        tof_layout.addWidget(self.tof_status)
+        tof_layout.addWidget(self.tof1_line)
+        tof_layout.addWidget(self.tof2_line)
+        tof_layout.addWidget(self.tof_overall_line)
+
         layout.addLayout(header)
         layout.addLayout(controls)
+
         camera_row = QHBoxLayout()
         camera_row.addWidget(self.standalone_camera_app)
         camera_row.addWidget(self.camera_app)
         layout.addLayout(camera_row)
+
         layout.addWidget(lidar_dashboard)
+        layout.addWidget(tof_dashboard)
+
         self.set_indoor()
 
     def toggle_secondary_stream(self):
@@ -761,12 +1070,16 @@ class CombinedView(QWidget):
         self.thresh_line.setText(self._format_thresholds())
         self.btn_indoor.setStyleSheet("font-weight: bold;")
         self.btn_outdoor.setStyleSheet("")
+        # CODE 2 mode hook (added)
+        self.tof_mode_ref["mode"] = "indoor"
 
     def set_outdoor(self):
         self.thresholds_ref["t"] = Thresholds(STOP_MIN, STOP_MAX_INDOOR * 2, CLOSE_MIN_INDOOR * 2, CLOSE_MAX_INDOOR * 2)
         self.thresh_line.setText(self._format_thresholds())
         self.btn_outdoor.setStyleSheet("font-weight: bold;")
         self.btn_indoor.setStyleSheet("")
+        # CODE 2 mode hook (added)
+        self.tof_mode_ref["mode"] = "outdoor"
 
     def update_lidar_ui(self, upd: LidarUpdate):
         self.lidar_status.setText("OK" if upd.status == "OK" else upd.status)
@@ -789,19 +1102,35 @@ class CombinedView(QWidget):
             self.speech_gate.consider(upd.zone, upd.direction)
         self.thresh_line.setText(self._format_thresholds())
 
+    # CODE 2 UI updater (added)
+    def update_tof_ui(self, upd_obj):
+        upd: ToFUpdate = upd_obj
+        self.tof_status.setText("ToF: OK" if upd.status == "OK" else f"ToF: {upd.status}")
+        v1 = "—" if upd.tof1_mm is None else str(upd.tof1_mm)
+        v2 = "—" if upd.tof2_mm is None else str(upd.tof2_mm)
+        self.tof1_line.setText(f"tof1 = {v1} | {upd.tof1_status}")
+        self.tof2_line.setText(f"tof2 = {v2} | {upd.tof2_status}")
+        self.tof_overall_line.setText(f"overall = {upd.overall if upd.overall is not None else '—'} ({upd.mode})")
+
     def stop_workers(self):
         self.lidar_worker.stop()
         self.lidar_thread.quit()
         self.lidar_thread.wait()
+
+        # CODE 2 stop hook (added)
+        try:
+            self.tof_worker.stop()
+        except Exception:
+            pass
+        self.tof_thread.quit()
+        self.tof_thread.wait()
+
         self.tts_stop_event.set()
         self.detect_stop_event.set()
         if hasattr(self, 'camera_app'):
             self.camera_app.stop_stream()
         if hasattr(self, 'standalone_camera_app'):
             self.standalone_camera_app.stop_stream()
-
-
-
 
 
 class MainWindow(QMainWindow):
@@ -833,5 +1162,3 @@ if __name__ == "__main__":
     finally:
         if ON_PI:
             GPIO.cleanup()
-
-
