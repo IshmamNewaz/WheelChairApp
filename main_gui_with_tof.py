@@ -81,10 +81,10 @@ def find_camera_index(start=0, end=10):
         cap.release()
     return None
 
-UI_WIDTH = 200
-UI_HEIGHT = 280
-TARGET_SIZE = 360
-CAMERA_DISPLAY_SIZE = (800, 480)
+UI_WIDTH = 800
+UI_HEIGHT = 480
+TARGET_SIZE = 320
+CAMERA_DISPLAY_SIZE = (750, 300)
 # UI_WIDTH,UI_HEIGHT
 
 FPS_LIMIT = 30
@@ -652,6 +652,7 @@ class CameraApp(QWidget):
         display_size: tuple[int, int] = (TARGET_SIZE, 300),
         auto_start: bool = False,
         show_controls: bool = True,
+        frame_only: bool = False,
         on_start: Callable[[], None] | None = None,
         on_stop: Callable[[], None] | None = None,
     ):
@@ -662,6 +663,7 @@ class CameraApp(QWidget):
         self._display_width, self._display_height = display_size
         self._on_start = on_start
         self._on_stop = on_stop
+        self._frame_only = frame_only
         self._frame_lock = threading.Lock()
         self._frame_queue = deque(maxlen=20)
         self._latest_frame = None
@@ -681,30 +683,46 @@ class CameraApp(QWidget):
         self.status = QLabel("Idle")
         self.status.setObjectName("Status")
 
-        card = QFrame(); card.setObjectName("Card")
-        card_layout = QVBoxLayout(card); card_layout.setContentsMargins(10,10,10,10); card_layout.setSpacing(8)
-        card_layout.addWidget(self.title); card_layout.addWidget(self.video, alignment=Qt.AlignCenter)
+        self.card = QFrame(); self.card.setObjectName("Card")
+        self.card_layout = QVBoxLayout(self.card); self.card_layout.setContentsMargins(8,8,8,8); self.card_layout.setSpacing(6)
+        self.card_layout.addWidget(self.title); self.card_layout.addWidget(self.video, alignment=Qt.AlignCenter)
         bottom = QHBoxLayout(); bottom.addWidget(self.btn); bottom.addStretch(1); bottom.addWidget(self.status)
-        main_layout = QVBoxLayout(self); main_layout.setContentsMargins(12,12,12,12); main_layout.setSpacing(10)
-        main_layout.addWidget(card); main_layout.addLayout(bottom)
+        self.main_layout = QVBoxLayout(self); self.main_layout.setContentsMargins(8,8,8,8); self.main_layout.setSpacing(6)
+        self.main_layout.addWidget(self.card); self.main_layout.addLayout(bottom)
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_frame)
         self.apply_styles()
-        if not show_controls:
+        if not show_controls or self._frame_only:
             self.btn.setVisible(False)
             self.status.setVisible(False)
+        if self._frame_only:
+            self.title.setVisible(False)
+            self.card_layout.setContentsMargins(0, 0, 0, 0)
+            self.card_layout.setSpacing(0)
+            self.main_layout.setContentsMargins(0, 0, 0, 0)
+            self.main_layout.setSpacing(0)
         if auto_start:
             QTimer.singleShot(0, self.start_stream)
 
     def apply_styles(self):
+        if self._frame_only:
+            self.setStyleSheet("""
+                #Card { background: transparent; border: none; border-radius: 0px; }
+                #Title { font-size: 13px; font-weight: 700; }
+                #Video { background: #070A0E; border: none; border-radius: 0px; }
+                #PrimaryButton { background: #2B74FF; border: none; padding: 8px 12px; border-radius: 10px; font-weight: 700; min-width: 110px; font-size: 13px; }
+                #PrimaryButton:hover { background: #3A82FF; } #PrimaryButton:pressed { background: #1E5FE0; }
+                #Status { color: rgba(231,238,247,0.75); font-size: 12px; }
+            """)
+            return
         self.setStyleSheet("""
-            #Card { background: #0F1620; border: 1px solid rgba(231,238,247,0.08); border-radius: 16px; }
-            #Title { font-size: 14px; font-weight: 700; }
-            #Video { background: #070A0E; border: 1px solid rgba(231,238,247,0.08); border-radius: 14px; }
-            #PrimaryButton { background: #2B74FF; border: none; padding: 14px 20px; border-radius: 12px; font-weight: 700; min-width: 140px; font-size: 14px; }
+            #Card { background: #0F1620; border: 1px solid rgba(231,238,247,0.08); border-radius: 14px; }
+            #Title { font-size: 13px; font-weight: 700; }
+            #Video { background: #070A0E; border: 1px solid rgba(231,238,247,0.08); border-radius: 12px; }
+            #PrimaryButton { background: #2B74FF; border: none; padding: 8px 12px; border-radius: 10px; font-weight: 700; min-width: 110px; font-size: 13px; }
             #PrimaryButton:hover { background: #3A82FF; } #PrimaryButton:pressed { background: #1E5FE0; }
-            #Status { color: rgba(231,238,247,0.75); }
+            #Status { color: rgba(231,238,247,0.75); font-size: 12px; }
         """)
 
     def toggle_stream(self):
@@ -910,8 +928,8 @@ class CombinedView(QWidget):
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(4)
 
         header = QHBoxLayout()
         title = QLabel("LiDAR Monitor")
@@ -927,6 +945,7 @@ class CombinedView(QWidget):
         header.addWidget(self.close_btn)
 
         controls = QHBoxLayout()
+        controls.setSpacing(6)
         controls.addWidget(QLabel("Mode"))
         self.btn_indoor = QPushButton("Indoor")
         self.btn_indoor.clicked.connect(self.set_indoor)
@@ -948,8 +967,8 @@ class CombinedView(QWidget):
         controls.addWidget(self.btn_outdoor)
         controls.addStretch(1)
         controls.addWidget(self.speech_toggle)
-        if frontcambutton_enable:
-            controls.addWidget(self.secondary_toggle_btn)
+        # if frontcambutton_enable:
+        #     controls.addWidget(self.secondary_toggle_btn)
         controls.addWidget(self.rear_toggle_btn)
 
         self.standalone_camera_app = CameraApp(
@@ -958,6 +977,7 @@ class CombinedView(QWidget):
             display_size=CAMERA_DISPLAY_SIZE,
             auto_start=False,
             show_controls=False,
+            frame_only=True,
         )
 
         self.camera_app = CameraApp(
@@ -998,16 +1018,17 @@ class CombinedView(QWidget):
         self.tof1_line = QLabel("tof1 = — | No data")
         self.tof2_line = QLabel("tof2 = — | No data")
         self.tof_overall_line = QLabel("overall = —")
-        tof_layout.addWidget(QLabel("ToF (VL53L1X)"))
-        tof_layout.addWidget(self.tof_status)
-        tof_layout.addWidget(self.tof1_line)
-        tof_layout.addWidget(self.tof2_line)
-        tof_layout.addWidget(self.tof_overall_line)
+        #tof_layout.addWidget(QLabel("ToF (VL53L1X)"))
+        #tof_layout.addWidget(self.tof_status)
+        #tof_layout.addWidget(self.tof1_line)
+        #tof_layout.addWidget(self.tof2_line)
+        #tof_layout.addWidget(self.tof_overall_line)
 
         layout.addLayout(header)
         layout.addLayout(controls)
 
         camera_row = QHBoxLayout()
+        camera_row.setSpacing(6)
         camera_row.addWidget(self.standalone_camera_app)
         camera_row.addWidget(self.camera_app)
         layout.addLayout(camera_row)
@@ -1137,14 +1158,14 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Combined GUI")
-        self.resize(UI_WIDTH, UI_HEIGHT)
+        self.setFixedSize(UI_WIDTH, UI_HEIGHT)
         self.main_view = CombinedView()
         self.setCentralWidget(self.main_view)
         self.batch_process = None
         self.setStyleSheet("""
-            QWidget { background: #0B0F14; color: #E7EEF7; font-family: -apple-system, Segoe UI, Roboto; font-size: 20px; }
-            QPushButton { padding: 12px 18px; min-height: 60px; font-size: 44px; background: #36a9f3;}
-            #DangerButton { background: #D64545; border: none; padding: 12px 18px; border-radius: 10px; font-weight: 700; min-width: 120px; }
+            QWidget { background: #0B0F14; color: #E7EEF7; font-family: -apple-system, Segoe UI, Roboto; font-size: 14px; }
+            QPushButton { padding: 8px 12px; min-height: 38px; font-size: 14px; background: #36a9f3; }
+            #DangerButton { background: #D64545; border: none; padding: 8px 12px; border-radius: 10px; font-weight: 700; min-width: 100px; }
             #DangerButton:hover { background: #E05454; } #DangerButton:pressed { background: #B83A3A; }
         """)
 

@@ -67,9 +67,9 @@ def find_camera_index(start=0, end=10):
     return None
 
 UI_WIDTH = 800
-UI_HEIGHT = 480
-TARGET_SIZE = 360
-CAMERA_DISPLAY_SIZE = (800, 480)
+UI_HEIGHT = 600
+TARGET_SIZE = 320
+CAMERA_DISPLAY_SIZE = (750, 450)
 # UI_WIDTH,UI_HEIGHT
 
 FPS_LIMIT = 30
@@ -400,10 +400,10 @@ class CameraApp(QWidget):
         self.status.setObjectName("Status")
 
         card = QFrame(); card.setObjectName("Card")
-        card_layout = QVBoxLayout(card); card_layout.setContentsMargins(10,10,10,10); card_layout.setSpacing(8)
+        card_layout = QVBoxLayout(card); card_layout.setContentsMargins(8,8,8,8); card_layout.setSpacing(6)
         card_layout.addWidget(self.title); card_layout.addWidget(self.video, alignment=Qt.AlignCenter)
         bottom = QHBoxLayout(); bottom.addWidget(self.btn); bottom.addStretch(1); bottom.addWidget(self.status)
-        main_layout = QVBoxLayout(self); main_layout.setContentsMargins(12,12,12,12); main_layout.setSpacing(10)
+        main_layout = QVBoxLayout(self); main_layout.setContentsMargins(8,8,8,8); main_layout.setSpacing(6)
         main_layout.addWidget(card); main_layout.addLayout(bottom)
 
         self.timer = QTimer(self)
@@ -417,12 +417,12 @@ class CameraApp(QWidget):
 
     def apply_styles(self):
         self.setStyleSheet("""
-            #Card { background: #0F1620; border: 1px solid rgba(231,238,247,0.08); border-radius: 16px; }
-            #Title { font-size: 14px; font-weight: 700; }
-            #Video { background: #070A0E; border: 1px solid rgba(231,238,247,0.08); border-radius: 14px; }
-            #PrimaryButton { background: #2B74FF; border: none; padding: 14px 20px; border-radius: 12px; font-weight: 700; min-width: 140px; font-size: 14px; }
+            #Card { background: #0F1620; border: 1px solid rgba(231,238,247,0.08); border-radius: 14px; }
+            #Title { font-size: 13px; font-weight: 700; }
+            #Video { background: #070A0E; border: 1px solid rgba(231,238,247,0.08); border-radius: 12px; }
+            #PrimaryButton { background: #2B74FF; border: none; padding: 8px 12px; border-radius: 10px; font-weight: 700; min-width: 110px; font-size: 13px; }
             #PrimaryButton:hover { background: #3A82FF; } #PrimaryButton:pressed { background: #1E5FE0; }
-            #Status { color: rgba(231,238,247,0.75); }
+            #Status { color: rgba(231,238,247,0.75); font-size: 12px; }
         """)
 
     def toggle_stream(self):
@@ -624,8 +624,8 @@ class CombinedView(QWidget):
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(4)
         header = QHBoxLayout()
         title = QLabel("LiDAR Monitor")
         title.setObjectName("Title")
@@ -639,6 +639,7 @@ class CombinedView(QWidget):
         header.addWidget(self.lidar_status)
         header.addWidget(self.close_btn)
         controls = QHBoxLayout()
+        controls.setSpacing(6)
         controls.addWidget(QLabel("Mode"))
         self.btn_indoor = QPushButton("Indoor")
         self.btn_indoor.clicked.connect(self.set_indoor)
@@ -702,6 +703,7 @@ class CombinedView(QWidget):
         layout.addLayout(header)
         layout.addLayout(controls)
         camera_row = QHBoxLayout()
+        camera_row.setSpacing(6)
         camera_row.addWidget(self.standalone_camera_app)
         camera_row.addWidget(self.camera_app)
         layout.addLayout(camera_row)
@@ -808,14 +810,14 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Combined GUI")
-        self.resize(UI_WIDTH, UI_HEIGHT)
+        self.setFixedSize(UI_WIDTH, UI_HEIGHT)
         self.main_view = CombinedView()
         self.setCentralWidget(self.main_view)
         self.batch_process = None
         self.setStyleSheet("""
-            QWidget { background: #0B0F14; color: #E7EEF7; font-family: -apple-system, Segoe UI, Roboto; font-size: 20px; }
-            QPushButton { padding: 12px 18px; min-height: 60px; font-size: 44px; background: #36a9f3;}
-            #DangerButton { background: #D64545; border: none; padding: 12px 18px; border-radius: 10px; font-weight: 700; min-width: 120px; }
+            QWidget { background: #0B0F14; color: #E7EEF7; font-family: -apple-system, Segoe UI, Roboto; font-size: 14px; }
+            QPushButton { padding: 8px 12px; min-height: 38px; font-size: 14px; background: #36a9f3; }
+            #DangerButton { background: #D64545; border: none; padding: 8px 12px; border-radius: 10px; font-weight: 700; min-width: 100px; }
             #DangerButton:hover { background: #E05454; } #DangerButton:pressed { background: #B83A3A; }
         """)
 
