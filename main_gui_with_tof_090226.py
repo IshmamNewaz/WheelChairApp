@@ -860,11 +860,18 @@ class CameraApp(QWidget):
 
 
 class BatchDetectWorker(threading.Thread):
-    def __init__(self, camera_app: CameraApp, stop_event: threading.Event, tts_q: queue.Queue | None = None):
+    def __init__(
+        self,
+        camera_app: CameraApp,
+        stop_event: threading.Event,
+        tts_q: queue.Queue | None = None,
+        speech_enabled: threading.Event | None = None,
+    ):
         super().__init__(daemon=True)
         self.camera_app = camera_app
         self.stop_event = stop_event
         self.tts_q = tts_q
+        self.speech_enabled = speech_enabled
         self.model = None
         self.img_size = 640
         self.confidence = 0.4
@@ -892,6 +899,8 @@ class BatchDetectWorker(threading.Thread):
 
     def _speak(self, message: str):
         if not message or not TTS_AVAILABLE or self.tts_q is None:
+            return
+        if self.speech_enabled is not None and not self.speech_enabled.is_set():
             return
         try:
             self.tts_q.put(message)
@@ -947,6 +956,7 @@ class CombinedView(QWidget):
         self.tts_worker.start()
         self.speech_gate = SpeechGate(self.tts_q)
         self.tof_speech_gate = ToFSpeechGate(self.tts_q)  # NEW
+        self.speech_enabled = threading.Event()
 
         # CODE 2 (ToF) threading hooks
         self.tof_mode_ref = {"mode": "indoor"}
@@ -963,7 +973,12 @@ class CombinedView(QWidget):
         self.tof_thread.start()
 
         self.detect_stop_event = threading.Event()
-        self.detect_worker = BatchDetectWorker(self.camera_app, self.detect_stop_event, self.tts_q)
+        self.detect_worker = BatchDetectWorker(
+            self.camera_app,
+            self.detect_stop_event,
+            self.tts_q,
+            speech_enabled=self.speech_enabled,
+        )
         self.detect_worker.start()
 
     def _build_ui(self):
@@ -997,6 +1012,10 @@ class CombinedView(QWidget):
         self.speech_toggle.setEnabled(TTS_AVAILABLE)
         self.speech_toggle.toggled.connect(self._on_speech_toggled)
         self._update_speech_toggle_text(self.speech_toggle.isChecked())
+        if TTS_AVAILABLE and self.speech_toggle.isChecked():
+            self.speech_enabled.set()
+        else:
+            self.speech_enabled.clear()
         self.secondary_toggle_btn = QPushButton("Front Cam")
         self.secondary_toggle_btn.setObjectName("PrimaryButton")
         self.secondary_toggle_btn.clicked.connect(self.toggle_secondary_stream)
@@ -1113,6 +1132,10 @@ class CombinedView(QWidget):
 
     def _on_speech_toggled(self, checked: bool):
         self._update_speech_toggle_text(checked)
+        if checked and TTS_AVAILABLE:
+            self.speech_enabled.set()
+        else:
+            self.speech_enabled.clear()
 
     def close_app(self):
         QApplication.instance().quit()
