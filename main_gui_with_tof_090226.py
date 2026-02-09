@@ -8,7 +8,7 @@ from collections import deque, Counter
 from dataclasses import dataclass
 from typing import Callable, Optional, Deque, Tuple
 
-frontcambutton_enable=False
+frontcambutton_enable = False
 import cv2
 import numpy as np
 
@@ -43,7 +43,7 @@ except (ImportError, RuntimeError):
 
         def setwarnings(self, *_): pass
         def setmode(self, *_): pass
-        def setup(self, *_ , **__): pass
+        def setup(self, *_, **__): pass
         def output(self, *_): pass
         def cleanup(self): pass
 
@@ -56,7 +56,7 @@ except Exception:
     pyttsx3 = None
     TTS_AVAILABLE = False
 
-
+tof_show = True
 # -----------------------------
 # CODE 2 (ToF VL53L1X) optional imports
 # -----------------------------
@@ -89,7 +89,7 @@ CAMERA_DISPLAY_SIZE = (750, 300)
 
 FPS_LIMIT = 30
 FRONT_CAMERA_DEVICE = "/dev/v4l/by-id/usb-046d_0825_8E8080B0-video-index0"
-REAR_CAMERA_DEVICE  = "/dev/v4l/by-id/usb-hampo_A4tech_HD_720P_PC_Camera_SN0002-video-index0"
+REAR_CAMERA_DEVICE = "/dev/v4l/by-id/usb-hampo_A4tech_HD_720P_PC_Camera_SN0002-video-index0"
 
 STANDALONE_INPUT_INDEX = REAR_CAMERA_DEVICE
 CAMERA_INDEX_RANGE = [FRONT_CAMERA_DEVICE]
@@ -643,6 +643,45 @@ class SpeechGate:
             self.last_spoken_by_key[key] = now
 
 
+# -----------------------------
+# NEW: ToF speech gate (speaks "Object imminent"/"Object nearby" like LiDAR gating)
+# -----------------------------
+class ToFSpeechGate:
+    def __init__(self, tts_q: queue.Queue):
+        self.tts_q = tts_q
+        self.last_spoken_by_key: dict[tuple[str, str], float] = {}
+
+    def _phrase(self, status: str, which: str) -> str | None:
+        if status == "Object imminent":
+            return f"{which} object imminent at Floor Level"
+        if status == "Object nearby":
+            return f"{which} object nearby at floor level"
+        return None
+
+    def consider(self, upd: "ToFUpdate"):
+        now = time.time()
+
+        # map sensors to a stable label (you can rename left/right if needed)
+        candidates = [
+            ("left", upd.tof1_status),
+            ("right", upd.tof2_status),
+        ]
+
+        for which, status in candidates:
+            if status not in ("Object imminent", "Object nearby"):
+                continue
+
+            key = (which, status)
+            last_time = self.last_spoken_by_key.get(key, 0.0)
+            if last_time and (now - last_time) < SPEAK_REPEAT_SECONDS:
+                continue
+
+            phrase = self._phrase(status, which)
+            if phrase:
+                self.tts_q.put(phrase)
+                self.last_spoken_by_key[key] = now
+
+
 class CameraApp(QWidget):
     def __init__(
         self,
@@ -684,10 +723,10 @@ class CameraApp(QWidget):
         self.status.setObjectName("Status")
 
         self.card = QFrame(); self.card.setObjectName("Card")
-        self.card_layout = QVBoxLayout(self.card); self.card_layout.setContentsMargins(8,8,8,8); self.card_layout.setSpacing(6)
+        self.card_layout = QVBoxLayout(self.card); self.card_layout.setContentsMargins(8, 8, 8, 8); self.card_layout.setSpacing(6)
         self.card_layout.addWidget(self.title); self.card_layout.addWidget(self.video, alignment=Qt.AlignCenter)
         bottom = QHBoxLayout(); bottom.addWidget(self.btn); bottom.addStretch(1); bottom.addWidget(self.status)
-        self.main_layout = QVBoxLayout(self); self.main_layout.setContentsMargins(8,8,8,8); self.main_layout.setSpacing(6)
+        self.main_layout = QVBoxLayout(self); self.main_layout.setContentsMargins(8, 8, 8, 8); self.main_layout.setSpacing(6)
         self.main_layout.addWidget(self.card); self.main_layout.addLayout(bottom)
 
         self.timer = QTimer(self)
@@ -732,7 +771,7 @@ class CameraApp(QWidget):
             self.stop_stream()
 
     def start_stream(self):
-        backend = cv2.CAP_DSHOW if sys.platform.startswith("win") else cv2.CAP_AVFOUNDATION if sys.platform=="darwin" else 0
+        backend = cv2.CAP_DSHOW if sys.platform.startswith("win") else cv2.CAP_AVFOUNDATION if sys.platform == "darwin" else 0
         self.cap = None
         working_index = None
         if self._fixed_index is not None:
@@ -789,7 +828,7 @@ class CameraApp(QWidget):
         if not self.streaming or not self.cap:
             return
         now = time.time()
-        if self.last_frame_time and (now-self.last_frame_time) < (1.0/FPS_LIMIT):
+        if self.last_frame_time and (now - self.last_frame_time) < (1.0 / FPS_LIMIT):
             return
         self.last_frame_time = now
 
@@ -806,7 +845,7 @@ class CameraApp(QWidget):
         frame = cv2.resize(frame, (self._display_width, self._display_height), interpolation=cv2.INTER_AREA)
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         h, w, ch = rgb.shape
-        qimg = QImage(rgb.data, w, h, ch*w, QImage.Format_RGB888)
+        qimg = QImage(rgb.data, w, h, ch * w, QImage.Format_RGB888)
         self.video.setPixmap(QPixmap.fromImage(qimg))
 
     def get_recent_frames(self, count: int) -> list[np.ndarray]:
@@ -874,7 +913,7 @@ class BatchDetectWorker(threading.Thread):
 
             batch_results = [self._detect_frame(f) for f in frames]
             for i, result in enumerate(batch_results):
-                print(f"Result of image {i+1}: {result}")
+                print(f"Result of image {i + 1}: {result}")
 
             common_result = Counter(batch_results).most_common(1)[0][0]
             print(f"Most common result: {common_result}\n")
@@ -907,6 +946,7 @@ class CombinedView(QWidget):
         self.tts_worker = TTSWorker(self.tts_q, self.tts_stop_event)
         self.tts_worker.start()
         self.speech_gate = SpeechGate(self.tts_q)
+        self.tof_speech_gate = ToFSpeechGate(self.tts_q)  # NEW
 
         # CODE 2 (ToF) threading hooks
         self.tof_mode_ref = {"mode": "indoor"}
@@ -967,8 +1007,8 @@ class CombinedView(QWidget):
         controls.addWidget(self.btn_outdoor)
         controls.addStretch(1)
         controls.addWidget(self.speech_toggle)
-        # if frontcambutton_enable:
-        #     controls.addWidget(self.secondary_toggle_btn)
+        if frontcambutton_enable:
+            controls.addWidget(self.secondary_toggle_btn)
         controls.addWidget(self.rear_toggle_btn)
 
         self.standalone_camera_app = CameraApp(
@@ -982,7 +1022,7 @@ class CombinedView(QWidget):
 
         self.camera_app = CameraApp(
             title="Image Detection",
-            camera_indices=CAMERA_INDEX_RANGE,   # now list with 1 fixed device path
+            camera_indices=CAMERA_INDEX_RANGE,  # now list with 1 fixed device path
             display_size=CAMERA_DISPLAY_SIZE,
             auto_start=True,
             show_controls=False,
@@ -1009,7 +1049,7 @@ class CombinedView(QWidget):
         left_layout.addWidget(self.thresh_line)
         main_lidar_layout = QHBoxLayout()
         main_lidar_layout.addLayout(left_layout, stretch=1)
-        #lidar_layout.addLayout(main_lidar_layout)
+        # lidar_layout.addLayout(main_lidar_layout)
 
         # CODE 2 output panel (ToF) - added without changing existing behavior
         tof_dashboard = QFrame()
@@ -1018,11 +1058,12 @@ class CombinedView(QWidget):
         self.tof1_line = QLabel("tof1 = — | No data")
         self.tof2_line = QLabel("tof2 = — | No data")
         self.tof_overall_line = QLabel("overall = —")
-        tof_layout.addWidget(QLabel("ToF (VL53L1X)"))
-        tof_layout.addWidget(self.tof_status)
-        tof_layout.addWidget(self.tof1_line)
-        tof_layout.addWidget(self.tof2_line)
-        tof_layout.addWidget(self.tof_overall_line)
+        if tof_show:
+            tof_layout.addWidget(QLabel("ToF (VL53L1X)"))
+            tof_layout.addWidget(self.tof_status)
+            tof_layout.addWidget(self.tof1_line)
+            tof_layout.addWidget(self.tof2_line)
+            tof_layout.addWidget(self.tof_overall_line)
 
         layout.addLayout(header)
         layout.addLayout(controls)
@@ -1132,6 +1173,10 @@ class CombinedView(QWidget):
         self.tof1_line.setText(f"tof1 = {v1} | {upd.tof1_status}")
         self.tof2_line.setText(f"tof2 = {v2} | {upd.tof2_status}")
         self.tof_overall_line.setText(f"overall = {upd.overall if upd.overall is not None else '—'} ({upd.mode})")
+
+        # NEW: speak ToF statuses using same mute/speak toggle and repeat gate
+        if self.speech_toggle.isChecked():
+            self.tof_speech_gate.consider(upd)
 
     def stop_workers(self):
         self.lidar_worker.stop()
